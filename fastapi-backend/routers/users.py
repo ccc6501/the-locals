@@ -1,0 +1,368 @@
+"""
+User management routes
+"""
+
+from fastapi import APIRouter, Depends, HTTPException, status, Body
+from fastapi.encoders import jsonable_encoder
+from sqlalchemy.orm import Session
+from typing import List, Optional
+
+from database import get_db
+from models import User, Device, Notification
+from schemas import UserResponse, UserCreate, UserUpdate
+from auth_utils import get_current_active_user, require_admin, require_moderator, get_password_hash
+
+router = APIRouter()
+
+
+@router.get("", response_model=List[UserResponse], response_model_by_alias=True)
+async def get_users(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Get all users with device information"""
+    from datetime import datetime, timedelta
+    
+    users = db.query(User).all()
+    
+    # Enrich each user with latest device info
+    enriched_users = []
+    for user in users:
+        # Get latest active device
+        latest_device = db.query(Device).filter(
+            Device.user_id == user.id,
+            Device.is_active == True
+        ).order_by(Device.last_active.desc()).first()
+        
+        # Determine status based on last activity (online if active within last 5 minutes)
+        status = "offline"
+        if latest_device and latest_device.last_active:
+            time_diff = datetime.utcnow() - latest_device.last_active
+            if time_diff < timedelta(minutes=5):
+                status = "online"
+            elif time_diff < timedelta(hours=1):
+                status = "away"
+        
+        user_dict = {
+            'id': user.id,
+            'name': user.name,
+            'handle': user.handle,
+            'email': user.email,
+            'role': user.role,
+            'status': status,  # Dynamic status based on activity
+            'devices': user.devices,
+            'aiUsage': user.ai_usage,
+            'storageUsed': user.storage_used,
+            'created_at': user.created_at,
+            'lastIp': latest_device.ip_address if latest_device else None,
+            'lastDevice': latest_device.device_name if latest_device else None,
+            'lastActive': latest_device.last_active.isoformat() if latest_device and latest_device.last_active else None
+        }
+        enriched_users.append(user_dict)
+    
+    return enriched_users
+
+
+@router.get("/{user_id}", response_model=UserResponse, response_model_by_alias=True)
+async def get_user(
+    user_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Get single user by ID"""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    return user
+
+
+@router.post("", response_model=UserResponse, response_model_by_alias=True)
+async def create_user(
+    user_data: UserCreate,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    """Create new user (admin only)"""
+    # Check if email already exists
+    existing_user = db.query(User).filter(User.email == user_data.email).first()
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered"
+        )
+    
+    # Generate handle if not provided
+    if user_data.handle:
+        handle = user_data.handle if user_data.handle.startswith('@') else f"@{user_data.handle}"
+    else:
+        # Auto-generate from name or email
+        base_handle = user_data.name.lower().replace(' ', '_') if user_data.name else user_data.email.split('@')[0]
+        handle = f"@{base_handle}"
+    
+    # Check if handle already exists and make it unique
+    existing_handle = db.query(User).filter(User.handle == handle).first()
+    if existing_handle:
+        # Add number suffix to make it unique
+        counter = 1
+        while db.query(User).filter(User.handle == f"{handle}{counter}").first():
+            counter += 1
+        handle = f"{handle}{counter}"
+    
+    # Create user
+    hashed_password = get_password_hash(user_data.password)
+    new_user = User(
+        name=user_data.name,
+        handle=handle,
+        email=user_data.email,
+        hashed_password=hashed_password,
+        role=user_data.role,
+        status="offline"
+    )
+    
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    
+    return new_user
+
+
+@router.put("/{user_id}", response_model=UserResponse, response_model_by_alias=True)
+async def update_user(
+    user_id: int,
+    user_data: UserUpdate,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    """Update user (admin only)"""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    # Update fields if provided
+    if user_data.name is not None:
+        user.name = user_data.name
+    if user_data.email is not None:
+        user.email = user_data.email
+    if user_data.role is not None:
+        user.role = user_data.role
+    
+    db.commit()
+    db.refresh(user)
+    
+    return user
+
+
+@router.delete("/{user_id}")
+async def delete_user(
+    user_id: int,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    """Delete user (admin only)"""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    # Don't allow deleting yourself
+    if user.id == current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete your own account"
+        )
+    
+    db.delete(user)
+    db.commit()
+    
+    return {"message": "User deleted successfully"}
+
+
+@router.patch("/{user_id}/suspend")
+async def suspend_user(
+    user_id: int,
+    current_user: User = Depends(require_moderator),
+    db: Session = Depends(get_db)
+):
+    """Suspend user (admin/moderator only)"""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    user.status = "suspended"
+    db.commit()
+    
+    return {"message": "User suspended successfully"}
+
+
+@router.patch("/{user_id}/activate")
+async def activate_user(
+    user_id: int,
+    current_user: User = Depends(require_moderator),
+    db: Session = Depends(get_db)
+):
+    """Activate suspended user (admin/moderator only)"""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    user.status = "offline"
+    db.commit()
+    
+    return {"message": "User activated successfully"}
+
+
+@router.patch("/profile/password")
+async def change_password(
+    passwords: dict = Body(...),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Change own password"""
+    from auth_utils import verify_password
+    
+    current_password = passwords.get("current_password")
+    new_password = passwords.get("new_password")
+    
+    if not current_password or not new_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Both current_password and new_password are required"
+        )
+    
+    # Verify current password
+    if not verify_password(current_password, current_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Current password is incorrect"
+        )
+    
+    # Update password
+    current_user.hashed_password = get_password_hash(new_password)
+    db.commit()
+    
+    return {"message": "Password changed successfully"}
+
+
+@router.patch("/profile", response_model=UserResponse, response_model_by_alias=True)
+async def update_own_profile(
+    profile_data: dict = Body(...),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Update own profile (name and handle only)"""
+    name = profile_data.get("name")
+    handle = profile_data.get("handle")
+    
+    if name is not None:
+        current_user.name = name
+    
+    if handle is not None:
+        # Ensure handle starts with @
+        new_handle = handle if handle.startswith('@') else f"@{handle}"
+        
+        # Check if handle is already taken by another user
+        existing = db.query(User).filter(
+            User.handle == new_handle,
+            User.id != current_user.id
+        ).first()
+        
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Handle already taken"
+            )
+        
+        current_user.handle = new_handle
+    
+    db.commit()
+    db.refresh(current_user)
+    
+    return current_user
+
+
+@router.post("/{user_id}/ping")
+async def ping_user(
+    user_id: int,
+    message: dict = Body(...),
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    """Send a notification/ping to a user (admin only)"""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    ping_message = message.get("message", "Admin notification")
+    
+    # Create notification
+    notification = Notification(
+        user_id=user_id,
+        type="ping",
+        title=f"Ping from {current_user.name}",
+        message=ping_message,
+        from_user_id=current_user.id
+    )
+    db.add(notification)
+    db.commit()
+    
+    return {
+        "message": f"Ping sent to {user.name}",
+        "user_id": user_id,
+        "content": ping_message
+    }
+
+
+@router.get("/notifications/my", response_model=List)
+async def get_my_notifications(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Get notifications for current user"""
+    from schemas import NotificationResponse
+    
+    notifications = db.query(Notification).filter(
+        Notification.user_id == current_user.id
+    ).order_by(Notification.created_at.desc()).all()
+    
+    return notifications
+
+
+@router.patch("/notifications/{notification_id}/read")
+async def mark_notification_read(
+    notification_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Mark notification as read"""
+    notification = db.query(Notification).filter(
+        Notification.id == notification_id,
+        Notification.user_id == current_user.id
+    ).first()
+    
+    if not notification:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Notification not found"
+        )
+    
+    notification.read = True
+    db.commit()
+    
+    return {"message": "Notification marked as read"}

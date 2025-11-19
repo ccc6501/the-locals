@@ -1,0 +1,46 @@
+# FastAPI Backend Dependencies
+
+# Core
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+python-multipart==0.0.6
+
+# Database
+sqlalchemy==2.0.25
+alembic==1.13.1
+
+# Authentication & Security
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.1.2
+user-agents==2.2.0  # Device tracking and user agent parsing
+
+# AI Integration
+openai==1.10.0
+httpx==0.26.0  # For Ollama API calls
+
+# Cloud Storage
+boto3==1.34.34  # AWS S3
+google-cloud-storage==2.14.0  # Google Cloud Storage
+azure-storage-blob==12.19.0  # Azure Blob Storage
+
+# Tailscale (via subprocess/API)
+requests==2.31.0
+
+# System Monitoring
+psutil==5.9.8  # CPU, Memory, Disk monitoring
+
+# WebSockets
+websockets==12.0
+
+# Utilities
+python-dotenv==1.0.1
+pydantic==2.5.3
+pydantic-settings==2.1.0
+email-validator==2.1.0
+
+# Development
+pytest==7.4.4
+pytest-asyncio==0.23.3
+black==24.1.1
+flake8==7.0.0

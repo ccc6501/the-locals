@@ -1,0 +1,25 @@
+# Admin Panel — Recovery Admin Accounts
+Generated: 2025-11-19T14:47:31.116137Z
+
+Frontend Login URLs (try in order):
+  - http://localhost:3003
+  - http://home-hub:3003
+  - http://home-hub-1:3003
+  - Replace with your Tailscale IP if needed: http://100.x.x.x:3003
+
+Primary Admin:
+  Email:    admin@home.local
+  Password: wrmbjiY@gy9r&7WL
+
+Backup Admin:
+  Email:    admin-recovery@home.local
+  Password: MQKtO@s]uv^{F5=D
+
+API base (backend):
+  - http://localhost:8000
+  - http://home-hub:8000
+  - http://home-hub-1:8000
+
+Security notes:
+  - Change these passwords after first login.
+  - Delete this file once access is restored.

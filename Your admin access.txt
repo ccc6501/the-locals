@@ -1,0 +1,46 @@
+Your admin access (ready now)
+Primary admin
+Email: admin@home.local
+Password: wrmbjiY@gy9r&7WL
+Backup admin
+Email: admin-recovery@home.local
+Password: MQKtO@s]uv^{F5=D
+Recovery file with links and credentials:
+
+Location: RECOVERY_ADMIN.txt
+Login sites (try in this order):
+
+http://localhost:3003
+http://home-hub:3003
+http://home-hub-1:3003
+Or your Tailscale IP: http://100.x.x.x:3003
+Backend API base (for reference):
+
+http://localhost:8000
+http://home-hub:8000
+http://home-hub-1:8000
+Security: After you log in, change these passwords and delete the recovery file.
+
+Why the Desktop run failed
+You ran a copy at “c:/Users/Chance/Desktop/The Local Build/recovery_admin.py” and got:
+ModuleNotFoundError: No module named 'database'
+
+The script imports database, models, etc. from the backend project. If you move the script out of that folder, those imports break. Use the copy inside the backend folder.
+
+If you want to run the recovery script again
+Run it from the backend directory (or specify full path) so imports resolve:
+
+
+cd C:\Users\Chance\Downloads\fastapi-backendC:\Users\Chance\AppData\Local\Programs\Python\Python312\python.exe recovery_admin.py
+Optional custom credentials:
+
+
+cd C:\Users\Chance\Downloads\fastapi-backendC:\Users\Chance\AppData\Local\Programs\Python\Python312\python.exe recovery_admin.py --email "admin@example.com" --password "Your$trongP@ss" --name "Admin" --handle "@admin" --backup-email "recovery@example.com" --backup-password "Another$trongP@ss"
+This will update/create admins, then write an updated RECOVERY_ADMIN.txt with the new credentials.
+
+Next steps
+Use one of the admin accounts to sign in at http://localhost:3003 (or http://home-hub:3003).
+Then we’ll re-check “Add User” and “Create Invite” from the UI now that you’ve got admin permissions. If those still fail, I’ll capture the exact API error and patch the backend/frontend accordingly.
+If you want, I can also add a small PowerShell helper in fastapi-backend (e.g., recovery.ps1) to run the script with recommended defaults and print the login links—say the word and I’ll drop it in.
+
+GPT-5 • 1x

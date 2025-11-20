@@ -18,6 +18,82 @@ from auth_utils import get_current_active_user, require_admin
 router = APIRouter()
 
 
+@router.get("/tailscale/summary")
+async def get_tailscale_summary():
+    """
+    Get Tailscale network summary.
+    No authentication required for ChatOps console.
+    """
+    try:
+        # Try to get tailscale status
+        result = subprocess.run(
+            ["tailscale", "status", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        
+        if result.returncode == 0:
+            import json
+            status_data = json.loads(result.stdout)
+            
+            # Parse the status
+            peers = status_data.get("Peer", {})
+            self_info = status_data.get("Self", {})
+            
+            devices_online = len([p for p in peers.values() if p.get("Online", False)]) + 1  # +1 for self
+            devices_total = len(peers) + 1  # +1 for self
+            
+            exit_node = "none"
+            if self_info.get("ExitNode"):
+                exit_node = self_info.get("ExitNodeOption", "enabled")
+            
+            return {
+                "devices_online": devices_online,
+                "devices_total": devices_total,
+                "exit_node": exit_node,
+                "last_check": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "status": "connected"
+            }
+        else:
+            # Tailscale not running or error
+            return {
+                "devices_online": 0,
+                "devices_total": 0,
+                "exit_node": "none",
+                "last_check": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "status": "disconnected",
+                "error": "Tailscale not running or not installed"
+            }
+    except subprocess.TimeoutExpired:
+        return {
+            "devices_online": 0,
+            "devices_total": 0,
+            "exit_node": "none",
+            "last_check": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "status": "timeout",
+            "error": "Tailscale command timed out"
+        }
+    except FileNotFoundError:
+        return {
+            "devices_online": 0,
+            "devices_total": 0,
+            "exit_node": "none",
+            "last_check": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "status": "not_installed",
+            "error": "Tailscale not found on system"
+        }
+    except Exception as e:
+        return {
+            "devices_online": 0,
+            "devices_total": 0,
+            "exit_node": "none",
+            "last_check": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "status": "error",
+            "error": str(e)
+        }
+
+
 def get_uptime() -> str:
     """Get system uptime"""
     uptime_seconds = int((datetime.now() - datetime.fromtimestamp(psutil.boot_time())).total_seconds())

@@ -36,42 +36,10 @@ app = FastAPI(
     # lifespan=lifespan
 )
 
-# CORS configuration - Allow Tailscale and localhost
+# CORS configuration - Allow all Tailscale and localhost origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:3001",
-        "http://localhost:3002",
-        "http://localhost:3003",
-        "http://localhost:5173",
-        # Tailscale IPs
-        "http://100.88.23.90:3000",
-        "http://100.88.23.90:3001",
-        "http://100.88.23.90:3002",
-        "http://100.88.23.90:3003",
-        "http://100.96.169.36:3000",
-        "http://100.96.169.36:3001",
-        "http://100.96.169.36:3002",
-        "http://100.96.169.36:3003",
-        "http://100.112.252.35:3000",
-        "http://100.112.252.35:3001",
-        "http://100.112.252.35:3002",
-        "http://100.112.252.35:3003",
-        "http://100.126.159.45:3000",
-        "http://100.126.159.45:3001",
-        "http://100.126.159.45:3002",
-        "http://100.126.159.45:3003",
-        # Tailscale MagicDNS
-        "http://home-hub:3000",
-        "http://home-hub:3001",
-        "http://home-hub:3002",
-        "http://home-hub:3003",
-        "http://home-hub-1:3000",
-        "http://home-hub-1:3001",
-        "http://home-hub-1:3002",
-        "http://home-hub-1:3003",
-    ],
+    allow_origins=["*"],  # Allow all origins for development/Tailscale
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

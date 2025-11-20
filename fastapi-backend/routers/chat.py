@@ -4,10 +4,11 @@ Chat routes - Threads and Messages with AI integration
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 from datetime import datetime
 import os
 from dotenv import load_dotenv
+from pydantic import BaseModel
 
 from database import get_db
 from models import User, Thread, Message, Connection
@@ -21,6 +22,175 @@ import httpx
 load_dotenv()
 
 router = APIRouter()
+
+
+@router.get("/ollama/models")
+async def get_ollama_models(base_url: str = "http://localhost:11434"):
+    """
+    Get list of available Ollama models.
+    No authentication required.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(f"{base_url}/api/tags")
+            response.raise_for_status()
+            data = response.json()
+            
+            # Extract model names
+            models = [model["name"] for model in data.get("models", [])]
+            
+            return {
+                "models": models,
+                "base_url": base_url,
+                "count": len(models)
+            }
+    
+    except httpx.ConnectError:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Cannot connect to Ollama at {base_url}. Make sure Ollama is running."
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch Ollama models: {str(e)}"
+        )
+
+
+# Simple chat models for ChatOps console
+class ChatConfig(BaseModel):
+    """Provider-specific configuration"""
+    api_key: Optional[str] = None
+    model: Optional[str] = None
+    base_url: Optional[str] = None
+
+
+class SimpleChatRequest(BaseModel):
+    """Simple chat request for ChatOps console"""
+    message: str
+    provider: str = "openai"
+    temperature: float = 0.7
+    config: Optional[ChatConfig] = None
+
+
+class SimpleChatResponse(BaseModel):
+    """Simple chat response"""
+    reply: str
+    provider: str
+    model: str
+
+
+@router.post("/chat", response_model=SimpleChatResponse)
+async def simple_chat(request: SimpleChatRequest):
+    """
+    Simple chat endpoint for ChatOps console.
+    No authentication required, supports OpenAI and Ollama.
+    """
+    
+    if request.provider == "openai":
+        return await _chat_openai_simple(request)
+    elif request.provider == "ollama":
+        return await _chat_ollama_simple(request)
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown provider: {request.provider}")
+
+
+async def _chat_openai_simple(request: SimpleChatRequest) -> SimpleChatResponse:
+    """Call OpenAI API for simple chat"""
+    
+    # Get API key from request or environment
+    api_key = None
+    if request.config and request.config.api_key:
+        api_key = request.config.api_key
+    else:
+        api_key = os.getenv("OPENAI_API_KEY")
+    
+    if not api_key:
+        raise HTTPException(
+            status_code=400,
+            detail="OpenAI API key required. Provide in config.api_key or set OPENAI_API_KEY environment variable."
+        )
+    
+    model = (request.config.model if request.config else None) or "gpt-4o"
+    
+    try:
+        client = openai.OpenAI(api_key=api_key)
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a helpful AI assistant for The Local - a Tailscale-powered home hub with AI capabilities. Be concise and helpful."
+                },
+                {
+                    "role": "user",
+                    "content": request.message
+                }
+            ],
+            temperature=request.temperature,
+            max_tokens=1000
+        )
+        
+        reply_text = response.choices[0].message.content
+        
+        return SimpleChatResponse(
+            reply=reply_text,
+            provider="openai",
+            model=model
+        )
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"OpenAI API error: {str(e)}")
+
+
+async def _chat_ollama_simple(request: SimpleChatRequest) -> SimpleChatResponse:
+    """Call Ollama API for simple chat"""
+    
+    base_url = (request.config.base_url if request.config else None) or "http://localhost:11434"
+    model = (request.config.model if request.config else None) or "llama3"
+    
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                f"{base_url}/api/chat",
+                json={
+                    "model": model,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": "You are a helpful AI assistant for The Local - a Tailscale-powered home hub. Be concise and helpful."
+                        },
+                        {
+                            "role": "user",
+                            "content": request.message
+                        }
+                    ],
+                    "stream": False,
+                    "options": {
+                        "temperature": request.temperature,
+                    }
+                }
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            reply_text = data["message"]["content"]
+            
+            return SimpleChatResponse(
+                reply=reply_text,
+                provider="ollama",
+                model=model
+            )
+    
+    except httpx.ConnectError:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Cannot connect to Ollama at {base_url}. Make sure Ollama is running."
+        )
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=f"Ollama error: {e.response.text}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ollama call failed: {str(e)}")
 
 
 async def get_ai_response(message: str, thread_type: str, db: Session) -> str:

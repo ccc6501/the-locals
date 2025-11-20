@@ -15,6 +15,64 @@ from auth_utils import get_current_active_user, require_admin, require_moderator
 router = APIRouter()
 
 
+@router.get("/admin/summary")
+async def get_user_summary(db: Session = Depends(get_db)):
+    """
+    Get user summary for ChatOps console.
+    No authentication required.
+    """
+    from datetime import datetime, timedelta
+    
+    # Get all users
+    all_users = db.query(User).all()
+    total_users = len(all_users)
+    
+    # Count active users (logged in within last 24 hours)
+    active_count = 0
+    for user in all_users:
+        latest_device = db.query(Device).filter(
+            Device.user_id == user.id,
+            Device.is_active == True
+        ).order_by(Device.last_active.desc()).first()
+        
+        if latest_device and latest_device.last_active:
+            time_diff = datetime.utcnow() - latest_device.last_active
+            if time_diff < timedelta(hours=24):
+                active_count += 1
+    
+    # Count admins
+    admin_count = db.query(User).filter(User.role == "admin").count()
+    
+    # Get first 4 users with details
+    user_list = []
+    for user in all_users[:4]:
+        # Check if active
+        latest_device = db.query(Device).filter(
+            Device.user_id == user.id,
+            Device.is_active == True
+        ).order_by(Device.last_active.desc()).first()
+        
+        is_active = False
+        if latest_device and latest_device.last_active:
+            time_diff = datetime.utcnow() - latest_device.last_active
+            is_active = time_diff < timedelta(hours=24)
+        
+        user_list.append({
+            "id": user.id,
+            "name": user.name,
+            "email": user.email,
+            "role": user.role,
+            "active": is_active
+        })
+    
+    return {
+        "total": total_users,
+        "active": active_count,
+        "admins": admin_count,
+        "users": user_list
+    }
+
+
 @router.get("", response_model=List[UserResponse], response_model_by_alias=True)
 async def get_users(
     current_user: User = Depends(get_current_active_user),

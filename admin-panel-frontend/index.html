@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <title>The Local – Infrastructure Control Center</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script>
+    // Debug loading
+    window.addEventListener('error', function (e) {
+      console.error('Loading error:', e);
+      document.body.innerHTML = '<div style="color:red;padding:20px;font-family:monospace;">Error loading: ' + e.message + '</div>';
+    });
+    console.log('Index.html loaded at:', new Date().toISOString());
+  </script>
+</head>
+
+<body class="bg-slate-950">
+  <div id="root"></div>
+  <noscript>
+    <div style="color:white;padding:20px;text-align:center;">
+      JavaScript is required to run this application.
+    </div>
+  </noscript>
+  <script type="module" src="/src/main.jsx"></script>
+</body>
+
+</html>

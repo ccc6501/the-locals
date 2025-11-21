@@ -1,84 +1,85 @@
-#!/usr/bin/env pwsh
-# Relaunch FastAPI Backend Server
-# Usage: ./relaunch.ps1
+# relaunch.ps1
+# One-click launcher for The Local Build
+# - Starts FastAPI backend in its own window
+# - Starts Vite/React frontend in its own window
+# - Opens browser to the correct port
 
-Write-Host "=== FastAPI Backend Relaunch Tool ===" -ForegroundColor Cyan
+$ErrorActionPreference = "Stop"
 
-# Stop any running backend processes
-Write-Host "`nStopping existing backend processes..." -ForegroundColor Yellow
-$procs = Get-CimInstance Win32_Process | Where-Object { 
-    $_.CommandLine -like '*fastapi-backend*main.py*' -or
-    $_.CommandLine -like '*uvicorn*main:app*' -or
-    ($_.Name -eq 'python.exe' -and $_.CommandLine -like '*main.py*')
+Write-Host "=== The Local launcher starting ===" -ForegroundColor Cyan
+
+# Resolve paths based on where this script lives (handles spaces in folder names)
+$Root = Split-Path -Parent $MyInvocation.MyCommand.Path
+$frontendPath = Join-Path $Root "admin-panel-frontend"
+$backendPath  = Join-Path $Root "fastapi-backend"
+
+Write-Host "Root folder: $Root" -ForegroundColor DarkGray
+Write-Host "Frontend:   $frontendPath" -ForegroundColor DarkGray
+Write-Host "Backend:    $backendPath" -ForegroundColor DarkGray
+
+# ---------- Start backend ----------
+if (Test-Path $backendPath) {
+    $backendCommand = @"
+Write-Host 'Starting FastAPI backend...' -ForegroundColor Cyan
+if (-not (Test-Path '.venv')) {
+    Write-Host 'Creating virtual environment (.venv)...' -ForegroundColor Yellow
+    python -m venv .venv
+}
+Write-Host 'Activating virtual environment...' -ForegroundColor Yellow
+. .\.venv\Scripts\Activate.ps1
+
+if (Test-Path 'requirements.txt') {
+    Write-Host 'Installing backend requirements (if needed)...' -ForegroundColor Yellow
+    pip install -r requirements.txt
 }
 
-$stopped = 0
-foreach ($p in $procs) {
-    try {
-        $cmdLine = $p.CommandLine
-        if ($cmdLine -like '*fastapi-backend*' -or $cmdLine -like '*uvicorn*') {
-            Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
-            Write-Host "  ✓ Stopped PID $($p.ProcessId)" -ForegroundColor Green
-            $stopped++
-        }
-    } catch {
-        Write-Host "  ! Could not stop PID $($p.ProcessId)" -ForegroundColor Red
-    }
+Write-Host 'Launching uvicorn (FastAPI)...' -ForegroundColor Cyan
+uvicorn main:app --reload
+"@
+
+    Start-Process powershell `
+        -WorkingDirectory $backendPath `
+        -WindowStyle Minimized `
+        -ArgumentList "-ExecutionPolicy Bypass -NoExit -Command $backendCommand"
+}
+else {
+    Write-Host "WARNING: Backend folder not found at $backendPath" -ForegroundColor Yellow
 }
 
-if ($stopped -eq 0) {
-    Write-Host "  No existing processes found" -ForegroundColor Gray
-}
-
-# Wait for cleanup
-Start-Sleep -Seconds 1
-
-# Start backend
-Write-Host "`nStarting backend server..." -ForegroundColor Yellow
-$pythonPath = "C:/Users/Chance/AppData/Local/Programs/Python/Python312/python.exe"
-$mainPath = "c:\Users\Chance\Downloads\fastapi-backend\main.py"
-
-try {
-    Start-Process -FilePath $pythonPath -ArgumentList $mainPath -WindowStyle Hidden -WorkingDirectory "c:\Users\Chance\Downloads\fastapi-backend"
-    Write-Host "  ✓ Backend process started" -ForegroundColor Green
-} catch {
-    Write-Host "  ✗ Failed to start backend: $($_.Exception.Message)" -ForegroundColor Red
+# ---------- Start frontend ----------
+if (Test-Path $frontendPath) {
+    $frontendCommand = @"
+Write-Host 'Starting frontend (Vite/React)...' -ForegroundColor Cyan
+if (-not (Test-Path 'package.json')) {
+    Write-Host 'ERROR: package.json not found in $frontendPath' -ForegroundColor Red
+    Read-Host 'Press Enter to close'
     exit 1
 }
 
-# Wait for server to initialize
-Write-Host "`nWaiting for server to initialize..." -ForegroundColor Yellow
-Start-Sleep -Seconds 3
-
-# Verify health endpoint
-Write-Host "`nChecking health endpoint..." -ForegroundColor Yellow
-$maxRetries = 5
-$retryCount = 0
-$healthy = $false
-
-while ($retryCount -lt $maxRetries -and -not $healthy) {
-    try {
-        $response = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:8000/api/health" -TimeoutSec 2
-        if ($response.StatusCode -eq 200) {
-            $content = $response.Content | ConvertFrom-Json
-            Write-Host "  ✓ Server is healthy: $($content.status)" -ForegroundColor Green
-            $healthy = $true
-        }
-    } catch {
-        $retryCount++
-        if ($retryCount -lt $maxRetries) {
-            Write-Host "  ⟳ Retry $retryCount/$maxRetries..." -ForegroundColor Gray
-            Start-Sleep -Seconds 1
-        }
-    }
+if (-not (Test-Path 'node_modules')) {
+    Write-Host 'Installing npm packages (this may take a moment)...' -ForegroundColor Yellow
+    npm install
 }
 
-if (-not $healthy) {
-    Write-Host "  ✗ Health check failed after $maxRetries attempts" -ForegroundColor Red
-    Write-Host "  The server may still be starting. Check logs manually." -ForegroundColor Yellow
-} else {
-    Write-Host "`n=== Backend is running ===" -ForegroundColor Cyan
-    Write-Host "  API: http://127.0.0.1:8000/api" -ForegroundColor White
-    Write-Host "  Tailscale: http://home-hub:8000/api" -ForegroundColor White
-    Write-Host "  Docs: http://127.0.0.1:8000/docs" -ForegroundColor White
+Write-Host 'Launching Vite dev server on http://localhost:5173 ...' -ForegroundColor Cyan
+npm run dev -- --port 5173
+"@
+
+    Start-Process powershell `
+        -WorkingDirectory $frontendPath `
+        -WindowStyle Minimized `
+        -ArgumentList "-ExecutionPolicy Bypass -NoExit -Command $frontendCommand"
 }
+else {
+    Write-Host "WARNING: Frontend folder not found at $frontendPath" -ForegroundColor Yellow
+}
+
+# ---------- Open browser ----------
+Write-Host "Waiting for frontend to boot..." -ForegroundColor Cyan
+Start-Sleep -Seconds 6
+
+$frontendUrl = "http://localhost:5173"
+Write-Host "Opening $frontendUrl" -ForegroundColor Green
+Start-Process $frontendUrl
+
+Write-Host "=== Launcher done. Backend + frontend are running in separate windows. ===" -ForegroundColor Green

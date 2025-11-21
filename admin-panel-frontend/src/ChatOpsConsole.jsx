@@ -8,11 +8,14 @@ import {
     Settings,
     Key,
     RefreshCw,
-    MessageSquare,
     Shield,
     ChevronDown,
-    CheckCircle2,
+    ChevronUp,
+    Bug,
+    Server,
+    Zap,
 } from "lucide-react";
+import ChatRoomList from "./ChatRoomList";
 
 const nowTime = () =>
     new Date().toLocaleTimeString("en-US", {
@@ -23,17 +26,46 @@ const nowTime = () =>
 const API_BASE =
     import.meta.env.VITE_API_BASE_URL || `http://${window.location.hostname}:8000`;
 
+// Generate consistent color for each user
+const getUserColor = (userName) => {
+    if (!userName) return "from-violet-500 to-sky-500";
+
+    const colors = [
+        "from-violet-500 to-sky-500",     // purple-blue
+        "from-emerald-500 to-teal-500",   // green-teal
+        "from-rose-500 to-pink-500",      // red-pink
+        "from-amber-500 to-orange-500",   // amber-orange
+        "from-cyan-500 to-blue-500",      // cyan-blue
+        "from-fuchsia-500 to-purple-500", // fuchsia-purple
+        "from-lime-500 to-green-500",     // lime-green
+        "from-indigo-500 to-violet-500",  // indigo-violet
+    ];
+
+    // Generate consistent index from username
+    let hash = 0;
+    for (let i = 0; i < userName.length; i++) {
+        hash = userName.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    return colors[Math.abs(hash) % colors.length];
+};
+
 const ChatOpsConsole = () => {
+    // Room state for group chat
+    const [currentRoom, setCurrentRoom] = useState({ id: "general", name: "General" });
+    const [lastMessageId, setLastMessageId] = useState(null);
+    const [isLoadingMessages, setIsLoadingMessages] = useState(false);
+
     const [messages, setMessages] = useState([
         {
             role: "assistant",
             content:
-                "Welcome to the ChatOps Neon shell. This is a standalone sandbox — no real API calls yet, but the layout is exactly where your Tailnet brain will plug in.",
+                "Welcome to ChatOps Neon. This shell mirrors your Tailnet brain's routing, AI, and bug surface so every test feels like the real deal.",
             time: nowTime(),
         },
     ]);
-    const [input, setInput] = useState("");
+    const [inputMessage, setInputMessage] = useState("");
     const [isThinking, setIsThinking] = useState(false);
+    const inputRef = React.useRef(null);
 
     // Load settings from localStorage on mount
     const [provider, setProvider] = useState(() => {
@@ -59,18 +91,17 @@ const ChatOpsConsole = () => {
     const [lastTestStatus, setLastTestStatus] = useState(null);
     const [error, setError] = useState(null);
 
-    // Settings tabs
-    const [settingsTab, setSettingsTab] = useState("ai");
+    const [controlTab, setControlTab] = useState("ai");
+    const [lazloMode, setLazloMode] = useState(false);
+    const [controlSurfaceCollapsed, setControlSurfaceCollapsed] = useState(false);
+
+    const [bugReports, setBugReports] = useState([]);
+    const [bugStatus, setBugStatus] = useState(null);
 
     // Tailnet stats
     const [tailnetStats, setTailnetStats] = useState(null);
     const [tailnetLoading, setTailnetLoading] = useState(false);
     const [tailnetError, setTailnetError] = useState(null);
-
-    // User summary
-    const [userSummary, setUserSummary] = useState(null);
-    const [userLoading, setUserLoading] = useState(false);
-    const [userError, setUserError] = useState(null);
 
     // Ollama models
     const [ollamaModels, setOllamaModels] = useState([]);
@@ -108,8 +139,90 @@ const ChatOpsConsole = () => {
         localStorage.setItem("chatops_temperature", temp.toString());
     }, [temp]);
 
-    const handleSend = async () => {
-        const value = input.trim();
+    // Load messages from backend when room changes
+    React.useEffect(() => {
+        let cancelled = false;
+
+        const loadMessages = async () => {
+            setIsLoadingMessages(true);
+            try {
+                const res = await fetch(`/chat/rooms/${currentRoom.id}/messages`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                if (cancelled) return;
+
+                // Convert backend messages to UI format
+                const formattedMessages = data.map(msg => ({
+                    role: msg.role,
+                    content: msg.content,
+                    user_name: msg.user_name,
+                    time: new Date(msg.created_at).toLocaleTimeString("en-US", {
+                        hour: "numeric",
+                        minute: "2-digit",
+                    }),
+                    id: msg.id,
+                }));
+
+                setMessages(formattedMessages);
+                const maxId = data.length ? Math.max(...data.map(m => m.id)) : null;
+                setLastMessageId(maxId);
+            } catch (err) {
+                console.error("Failed to load messages", err);
+                if (!cancelled) {
+                    setError(`Failed to load messages: ${err.message}`);
+                }
+            } finally {
+                if (!cancelled) setIsLoadingMessages(false);
+            }
+        };
+
+        loadMessages();
+        return () => {
+            cancelled = true;
+        };
+    }, [currentRoom.id]);
+
+    // Poll for new messages every 3 seconds
+    React.useEffect(() => {
+        if (!currentRoom.id || isLoadingMessages) return;
+
+        const pollInterval = setInterval(async () => {
+            try {
+                const url = lastMessageId
+                    ? `/chat/rooms/${currentRoom.id}/messages?since_id=${lastMessageId}`
+                    : `/chat/rooms/${currentRoom.id}/messages`;
+
+                const res = await fetch(url);
+                if (!res.ok) return;
+
+                const data = await res.json();
+                if (data.length === 0) return;
+
+                // Convert and append new messages
+                const newMessages = data.map(msg => ({
+                    role: msg.role,
+                    content: msg.content,
+                    user_name: msg.user_name,
+                    time: new Date(msg.created_at).toLocaleTimeString("en-US", {
+                        hour: "numeric",
+                        minute: "2-digit",
+                    }),
+                    id: msg.id,
+                }));
+
+                setMessages(prev => [...prev, ...newMessages]);
+                const maxId = Math.max(...data.map(m => m.id));
+                setLastMessageId(maxId);
+            } catch (err) {
+                console.error("Polling error:", err);
+            }
+        }, 3000);
+
+        return () => clearInterval(pollInterval);
+    }, [currentRoom.id, lastMessageId, isLoadingMessages]);
+
+    const handleSendMessage = async () => {
+        const value = inputMessage.trim();
         if (!value || isThinking) return;
 
         // Auto-fallback: no OpenAI key → use Ollama
@@ -127,11 +240,32 @@ const ChatOpsConsole = () => {
             time: nowTime(),
         };
         setMessages((prev) => [...prev, userMessage]);
-        setInput("");
+        setInputMessage("");
         setIsThinking(true);
 
+        // Dismiss keyboard on mobile
+        if (inputRef.current) {
+            inputRef.current.blur();
+        }
+
         try {
-            // build payload for your FastAPI backend
+            // STEP 1: Save user message to backend group chat
+            const saveRes = await fetch(`/chat/rooms/${currentRoom.id}/messages`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    content: value,
+                    role: "user",
+                    lazlo_mode: lazloMode,
+                    model: effectiveProvider === "openai" ? openaiModel : ollamaModel,
+                }),
+            });
+
+            if (!saveRes.ok) {
+                console.warn("Failed to save message to backend:", saveRes.status);
+            }
+
+            // STEP 2: Call AI chat endpoint (existing logic)
             const payload = {
                 message: value,
                 provider: effectiveProvider,
@@ -163,38 +297,52 @@ const ChatOpsConsole = () => {
 
             const data = await res.json();
 
-            // Adjust this to match whatever your backend returns
             const replyText =
                 data.reply ||
                 data.message ||
                 data.content ||
                 (typeof data === "string" ? data : JSON.stringify(data, null, 2));
 
-            // Tag reply with provider/model info
             const modelLabel =
                 effectiveProvider === "openai"
                     ? `${effectiveProvider}:${openaiModel}`
                     : `${effectiveProvider}:${ollamaModel}`;
 
+            const aiReply = `${replyText}\n\n— [${modelLabel} • temp=${temp.toFixed(2)}]`;
+
             const aiMessage = {
                 role: "assistant",
-                content: `${replyText}\n\n— [${modelLabel} • temp=${temp.toFixed(2)}]`,
+                content: aiReply,
                 time: nowTime(),
             };
             setMessages((prev) => [...prev, aiMessage]);
-            setLastChatOk(true); // Mark chat as healthy
+            setLastChatOk(true);
+
+            // STEP 3: Save AI response to backend
+            await fetch(`/chat/rooms/${currentRoom.id}/messages`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    content: aiReply,
+                    role: "assistant",
+                    lazlo_mode: lazloMode,
+                    model: effectiveProvider === "openai" ? openaiModel : ollamaModel,
+                }),
+            });
+
         } catch (err) {
             console.error("Chat API error:", err);
             setError(err.message || "Unknown error");
-            setLastChatOk(false); // Mark chat as unhealthy
+            setLastChatOk(false);
 
-            // show the failure in the chat stream so you see it over Tailnet
             setMessages((prev) => [
                 ...prev,
                 {
                     role: "assistant",
-                    content: `⚠️ Chat call failed.\n\nEndpoint: ${API_BASE}/api/chat/chat\nError: ${err.message || err
-                        }`,
+                    content: `⚠️ Chat call failed.
+
+Endpoint: ${API_BASE}/api/chat/chat
+Error: ${err.message || err}`,
                     time: nowTime(),
                 },
             ]);
@@ -203,11 +351,36 @@ const ChatOpsConsole = () => {
         }
     };
 
-    const handleKeyDown = (e) => {
+    const handleComposerKeyDown = (e) => {
         if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
-            handleSend();
+            if (!inputMessage?.trim()) return;
+            handleSendMessage();
         }
+    };
+
+    const handleLogBug = () => {
+        const text = (inputMessage || "").trim();
+        if (!text) return;
+
+        const now = new Date();
+        const lastMsg = messages[messages.length - 1] || null;
+
+        setBugReports((prev) => [
+            {
+                id: now.getTime(),
+                time: now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+                text,
+                context: lastMsg,
+            },
+            ...prev,
+        ]);
+
+        setBugStatus("saved");
+        setInputMessage("");
+        setControlTab("bug");
+
+        setTimeout(() => setBugStatus(null), 2500);
     };
 
     const handleTestConnection = () => {
@@ -242,27 +415,6 @@ const ChatOpsConsole = () => {
         }
     };
 
-    const refreshUserSummary = async () => {
-        setUserLoading(true);
-        setUserError(null);
-        try {
-            const res = await fetch(`${API_BASE}/api/users/admin/summary`, {
-                method: "GET",
-            });
-            if (!res.ok) {
-                throw new Error(`HTTP ${res.status}`);
-            }
-            const data = await res.json();
-            setUserSummary(data);
-        } catch (err) {
-            console.error("User summary error:", err);
-            setUserError(err.message || "Unknown error");
-            setUserSummary(null);
-        } finally {
-            setUserLoading(false);
-        }
-    };
-
     const fetchOllamaModels = async () => {
         setOllamaModelsLoading(true);
         try {
@@ -287,6 +439,22 @@ const ChatOpsConsole = () => {
             setOllamaModelsLoading(false);
         }
     };
+
+    const ControlChip = ({ id, label, icon: Icon }) => (
+        <button
+            type="button"
+            onClick={() => setControlTab(id)}
+            className={
+                "flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-xs sm:text-sm font-medium transition-all " +
+                (controlTab === id
+                    ? "bg-slate-800 text-slate-50 border border-purple-500/60 shadow-[0_0_0_1px_rgba(168,85,247,0.5)]"
+                    : "bg-slate-900/60 text-slate-400 border border-slate-700 hover:bg-slate-800/70")
+            }
+        >
+            {Icon && <Icon className="w-3.5 h-3.5" />}
+            <span>{label}</span>
+        </button>
+    );
 
     return (
         <div className="min-h-screen w-full bg-gradient-to-br from-slate-950 via-slate-950 to-slate-900 text-slate-50">
@@ -314,7 +482,7 @@ const ChatOpsConsole = () => {
                         {/* Chat status chip */}
                         <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-900/80 border border-slate-700/70">
                             <span className={`w-1.5 h-1.5 rounded-full ${lastChatOk === true ? 'bg-emerald-400 animate-pulse' :
-                                    lastChatOk === false ? 'bg-amber-400' : 'bg-slate-500'
+                                lastChatOk === false ? 'bg-amber-400' : 'bg-slate-500'
                                 }`} />
                             <span className="text-slate-300">
                                 {lastChatOk === true ? 'chat healthy' :
@@ -329,7 +497,7 @@ const ChatOpsConsole = () => {
                         {/* Tailnet status chip */}
                         <div className="hidden md:flex items-center gap-2 px-3 py-1 rounded-full bg-slate-900/80 border border-slate-700/70">
                             <Wifi className={`w-3.5 h-3.5 ${tailnetHealthy === true ? 'text-sky-400' :
-                                    tailnetHealthy === false ? 'text-amber-400' : 'text-slate-500'
+                                tailnetHealthy === false ? 'text-amber-400' : 'text-slate-500'
                                 }`} />
                             <span className="text-slate-400">
                                 {tailnetHealthy === true ? 'tailnet live' :
@@ -345,24 +513,59 @@ const ChatOpsConsole = () => {
                 {/* Chat column */}
                 <section className="rounded-3xl border border-slate-800/70 bg-gradient-to-b from-slate-950/90 to-slate-950/95 shadow-[0_18px_45px_rgba(0,0,0,0.75)] flex flex-col overflow-hidden">
                     {/* Chat header */}
-                    <div className="px-4 sm:px-6 pt-4 pb-3 border-b border-slate-800/70 flex items-center justify-between gap-3">
-                        <div>
-                            <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">
-                                AI Assistant
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <h2 className="text-base sm:text-lg font-semibold">
-                                    Ops Chat Console
-                                </h2>
-                                <span className="text-[11px] px-2 py-0.5 rounded-full border border-violet-500/50 text-violet-300 bg-violet-500/10">
-                                    preview
-                                </span>
+                    <div className="px-4 sm:px-6 py-3 border-b border-slate-800/70">
+                        <div className="flex items-center justify-between gap-3 mb-2">
+                            <div>
+                                <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">
+                                    AI Assistant
+                                </div>
+                                <div className="flex items-center gap-3">
+                                    <h2 className="text-base sm:text-lg font-semibold">
+                                        Ops Chat Console
+                                    </h2>
+                                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border border-slate-700/80 bg-slate-900/80 text-[11px] text-slate-300">
+                                        <span
+                                            className={`w-1.5 h-1.5 rounded-full ${lastChatOk === true
+                                                ? "bg-emerald-400 animate-pulse"
+                                                : lastChatOk === false
+                                                    ? "bg-amber-400"
+                                                    : "bg-slate-500"
+                                                }`}
+                                        />
+                                        <span>
+                                            {lastChatOk === true
+                                                ? "chat healthy"
+                                                : lastChatOk === false
+                                                    ? "chat issues"
+                                                    : "chat idle"}
+                                        </span>
+                                    </span>
+                                </div>
                             </div>
                         </div>
-                        <div className="hidden sm:flex items-center gap-2 text-[11px] text-slate-400">
-                            <MessageSquare className="w-3.5 h-3.5 text-sky-400" />
-                            <span>Chat history stored in memory only</span>
-                        </div>
+                        {currentRoom && (() => {
+                            const uniqueUsers = [...new Set(messages.filter(m => m.user_name).map(m => m.user_name))];
+                            if (uniqueUsers.length > 0) {
+                                return (
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                        <span className="text-[10px] uppercase tracking-wider text-slate-500">Active:</span>
+                                        {uniqueUsers.map(userName => {
+                                            const color = getUserColor(userName);
+                                            return (
+                                                <span
+                                                    key={userName}
+                                                    className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-gradient-to-r ${color} text-white text-[10px] font-medium shadow-md`}
+                                                >
+                                                    <span className="w-1 h-1 rounded-full bg-white/80 animate-pulse" />
+                                                    {userName}
+                                                </span>
+                                            );
+                                        })}
+                                    </div>
+                                );
+                            }
+                            return null;
+                        })()}
                     </div>
 
                     {/* Mode selector */}
@@ -373,8 +576,8 @@ const ChatOpsConsole = () => {
                                 key={m}
                                 onClick={() => setMode(m)}
                                 className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${mode === m
-                                        ? 'bg-violet-500/20 text-violet-300 border border-violet-500/50'
-                                        : 'bg-slate-900/50 text-slate-400 border border-slate-700/50 hover:border-slate-600/70'
+                                    ? 'bg-violet-500/20 text-violet-300 border border-violet-500/50'
+                                    : 'bg-slate-900/50 text-slate-400 border border-slate-700/50 hover:border-slate-600/70'
                                     }`}
                             >
                                 {m}
@@ -384,30 +587,38 @@ const ChatOpsConsole = () => {
 
                     {/* Messages */}
                     <div className="flex-1 px-3 sm:px-4 py-3 sm:py-4 overflow-y-auto space-y-3 bg-[radial-gradient(circle_at_top,_rgba(56,189,248,0.08),_transparent_55%),radial-gradient(circle_at_bottom,_rgba(129,140,248,0.12),_transparent_55%)]">
-                        {messages.map((m, idx) => (
-                            <div
-                                key={idx}
-                                className={`flex ${m.role === "user" ? "justify-end" : "justify-start"
-                                    }`}
-                            >
+                        {messages.map((m, idx) => {
+                            const userColor = m.user_name ? getUserColor(m.user_name) : "from-violet-500 to-sky-500";
+                            return (
                                 <div
-                                    className={`max-w-[82%] rounded-2xl px-3.5 py-2.5 text-sm shadow-lg ${m.role === "user"
-                                        ? "bg-gradient-to-r from-violet-500 to-sky-500 text-white rounded-br-sm"
-                                        : "bg-slate-900/90 border border-slate-700/70 text-slate-100 rounded-bl-sm"
-                                        }`}
+                                    key={m.id || idx}
+                                    className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}
                                 >
-                                    <div className="whitespace-pre-wrap">{m.content}</div>
                                     <div
-                                        className={`mt-1 text-[10px] ${m.role === "user"
-                                            ? "text-white/70"
-                                            : "text-slate-400/80"
+                                        className={`max-w-[82%] rounded-2xl px-3.5 py-2.5 text-sm shadow-lg ${m.role === "user"
+                                            ? `bg-gradient-to-r ${userColor} text-white rounded-br-sm`
+                                            : "bg-slate-900/90 border border-slate-700/70 text-slate-100 rounded-bl-sm"
                                             }`}
                                     >
-                                        {m.time}
+                                        {m.user_name && m.role === "user" && (
+                                            <div className="flex items-center gap-2 mb-1">
+                                                <div className="text-[11px] font-semibold text-white/90">
+                                                    {m.user_name}
+                                                </div>
+                                                <div className="w-1.5 h-1.5 rounded-full bg-white/60" />
+                                            </div>
+                                        )}
+                                        <div className="whitespace-pre-wrap">{m.content}</div>
+                                        <div
+                                            className={`mt-1 text-[10px] ${m.role === "user" ? "text-white/70" : "text-slate-400/80"
+                                                }`}
+                                        >
+                                            {m.time}
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
-                        ))}
+                            );
+                        })}
 
                         {isThinking && (
                             <div className="flex justify-start">
@@ -425,427 +636,438 @@ const ChatOpsConsole = () => {
 
                     {/* Input bar */}
                     <div className="border-t border-slate-800/80 bg-slate-950/95 px-3 sm:px-4 py-3">
-                        <div className="text-[10px] text-slate-500 mb-1.5 px-1">
-                            This console is **front-end only** right now. Once we're ready,
-                            this is where we'll connect to your Tailnet AI router (OpenAI /
-                            Ollama / local FastAPI).
-                        </div>
-                        <div className="flex items-end gap-2">
+                        <div className="flex gap-2 max-w-screen-lg mx-auto items-end">
                             <textarea
-                                rows={1}
-                                value={input}
-                                onChange={(e) => setInput(e.target.value)}
-                                onKeyDown={handleKeyDown}
-                                placeholder="Ask something about the hub, secrets, or ops…"
-                                className="flex-1 resize-none rounded-2xl bg-slate-900/80 border border-slate-700/70 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-violet-500/40 focus:border-violet-400/70"
+                                ref={inputRef}
+                                rows={3}
+                                value={inputMessage}
+                                onChange={(e) => setInputMessage(e.target.value)}
+                                onKeyDown={handleComposerKeyDown}
+                                placeholder="Ask something about the hub, secrets, TailNet, or Lazlo…"
+                                className="flex-1 px-4 py-3 bg-slate-800/60 border border-slate-700/60 rounded-2xl text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500/30 focus:border-purple-500 resize-none min-h-[56px] max-h-[120px]"
                             />
-                            <button
-                                onClick={handleSend}
-                                disabled={!input.trim() || isThinking}
-                                className="inline-flex items-center justify-center rounded-2xl px-3.5 py-2 bg-gradient-to-r from-violet-500 to-sky-500 text-white text-sm font-semibold shadow-lg shadow-violet-900/40 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95 transition-transform"
-                            >
-                                <Send className="w-4 h-4 mr-1" />
-                                Send
-                            </button>
+                            <div className="flex flex-col gap-2">
+                                <button
+                                    onClick={handleSendMessage}
+                                    className="flex items-center justify-center px-3 py-2 rounded-2xl bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 active:scale-95 shadow-lg shadow-purple-900/40 transition-all"
+                                >
+                                    <Send className="w-4 h-4" />
+                                </button>
+                                <button
+                                    onClick={handleLogBug}
+                                    className="px-3 py-2 rounded-2xl bg-slate-900/80 border border-amber-500/60 text-[11px] font-semibold text-amber-200 hover:bg-amber-500/10 active:scale-95"
+                                >
+                                    Log bug
+                                </button>
+                            </div>
                         </div>
+                        {bugStatus === "saved" && (
+                            <div className="mt-2 text-[11px] text-emerald-400 text-right">
+                                ✓ Bug saved to log
+                            </div>
+                        )}
                         {error && (
                             <div className="mt-2 text-[11px] text-red-400 px-1">
                                 Last error from backend: {error}
                             </div>
                         )}
                     </div>
+
+                    {/* Bug Log - At bottom of chat */}
+                    <section className="border-t border-slate-800/80 bg-slate-950/95 px-3 sm:px-4 py-3">
+                        <div className="flex items-center justify-between mb-3">
+                            <div>
+                                <h3 className="text-sm font-semibold text-slate-50">Bug & Idea Log</h3>
+                                <p className="text-xs text-slate-400">
+                                    Notes you send with <span className="font-semibold text-slate-200">Log bug</span> show up here while you test.
+                                </p>
+                            </div>
+                            <span className="text-[10px] px-2 py-1 rounded-full bg-slate-900 text-slate-300">
+                                {bugReports.length} saved
+                            </span>
+                        </div>
+
+                        {bugReports.length === 0 && (
+                            <div className="text-xs text-slate-500 border border-dashed border-slate-700 rounded-xl p-3">
+                                No bugs yet. Type in the chat, tap <span className="font-semibold">Log bug</span>, and they’ll collect here.
+                            </div>
+                        )}
+
+                        {bugReports.length > 0 && (
+                            <div className="max-h-64 overflow-y-auto space-y-2">
+                                {bugReports.map((bug) => (
+                                    <div
+                                        key={bug.id}
+                                        className="p-3 rounded-xl bg-slate-900/80 border border-slate-800 text-xs text-slate-200"
+                                    >
+                                        <div className="flex justify-between mb-1">
+                                            <span className="font-semibold text-slate-100">Note</span>
+                                            <span className="text-[10px] text-slate-500">{bug.time}</span>
+                                        </div>
+                                        <div className="whitespace-pre-wrap">{bug.text}</div>
+                                        {bug.context?.content && (
+                                            <div className="mt-2 text-[11px] text-slate-500 border-t border-slate-800 pt-1">
+                                                Last reply:{" "}
+                                                <span className="text-slate-300">
+                                                    {bug.context.content.slice(0, 120)}…
+                                                </span>
+                                            </div>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </section>
                 </section>
 
                 {/* Right column – Settings Panel */}
                 <aside className="space-y-4">
-                    {/* Tab strip */}
-                    <div className="rounded-3xl border border-slate-800/70 bg-slate-950/95 p-3 sm:p-4 shadow-[0_18px_45px_rgba(0,0,0,0.75)]">
-                        <div className="flex items-center justify-between mb-3">
+                    {/* Chat Rooms */}
+                    <div className="rounded-3xl border border-slate-800/70 bg-slate-950/95 p-4 sm:p-5 shadow-[0_18px_45px_rgba(0,0,0,0.75)]">
+                        <ChatRoomList
+                            currentRoom={currentRoom}
+                            onSelectRoom={(room) => {
+                                setCurrentRoom(room);
+                                setMessages([]);        // flush when switching rooms
+                                setLastMessageId(null); // force full reload
+                            }}
+                        />
+                    </div>
+
+                    <div className="rounded-3xl border border-slate-800/70 bg-slate-950/95 p-4 sm:p-5 shadow-[0_18px_45px_rgba(0,0,0,0.75)]">
+                        <div
+                            className="flex items-center justify-between cursor-pointer"
+                            onClick={() => setControlSurfaceCollapsed(!controlSurfaceCollapsed)}
+                        >
                             <div>
                                 <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">
                                     Control Surface
                                 </div>
-                                <div className="text-sm font-semibold text-slate-100">
-                                    Settings
-                                </div>
+                                <div className="text-sm font-semibold text-slate-100">Settings</div>
                             </div>
-                            <Settings className="w-4 h-4 text-slate-500" />
+                            <div className="flex items-center gap-2">
+                                <Settings className="w-4 h-4 text-slate-500" />
+                                {controlSurfaceCollapsed ? (
+                                    <ChevronDown className="w-4 h-4 text-slate-400" />
+                                ) : (
+                                    <ChevronUp className="w-4 h-4 text-slate-400" />
+                                )}
+                            </div>
                         </div>
 
-                        <div className="inline-flex rounded-full bg-slate-900/90 border border-slate-800/80 p-1 text-[11px] font-medium">
-                            <button
-                                type="button"
-                                onClick={() => setSettingsTab("ai")}
-                                className={`px-3 py-1.5 rounded-full flex items-center gap-1.5 ${settingsTab === "ai"
-                                    ? "bg-slate-100 text-slate-900"
-                                    : "text-slate-400"
-                                    }`}
-                            >
-                                <Sparkles className="w-3.5 h-3.5" />
-                                <span>AI</span>
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => setSettingsTab("tailnet")}
-                                className={`px-3 py-1.5 rounded-full flex items-center gap-1.5 ${settingsTab === "tailnet"
-                                    ? "bg-slate-100 text-slate-900"
-                                    : "text-slate-400"
-                                    }`}
-                            >
-                                <Wifi className="w-3.5 h-3.5" />
-                                <span>Tailnet</span>
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => setSettingsTab("users")}
-                                className={`px-3 py-1.5 rounded-full flex items-center gap-1.5 ${settingsTab === "users"
-                                    ? "bg-slate-100 text-slate-900"
-                                    : "text-slate-400"
-                                    }`}
-                            >
-                                <Shield className="w-3.5 h-3.5" />
-                                <span>Users</span>
-                            </button>
-                        </div>
-                    </div>
-
-                    {/* Settings tab content */}
-                    {settingsTab === "ai" && (
-                        <div className="space-y-4">
-                            {/* AI provider & model */}
-                            <div className="rounded-3xl border border-slate-800/70 bg-slate-950/95 p-4 sm:p-5 shadow-[0_18px_45px_rgba(0,0,0,0.75)]">
-                                <div className="flex items-center justify-between gap-3 mb-4">
-                                    <div>
-                                        <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">
-                                            AI Connections
-                                        </div>
-                                        <div className="text-sm font-semibold">Provider & Model</div>
-                                    </div>
-                                    <Cpu className="w-4 h-4 text-slate-500" />
+                        {!controlSurfaceCollapsed && (
+                            <>
+                                <div className="mt-3 grid grid-cols-5 gap-1.5 sm:gap-2">
+                                    <ControlChip id="ai" label="AI" icon={Zap} />
+                                    <ControlChip id="tailnet" label="TailNet" icon={Wifi} />
+                                    <ControlChip id="laz" label="Laz" icon={Cpu} />
+                                    <ControlChip id="provider" label="Provider" icon={Server} />
+                                    <ControlChip id="bug" label="Bug" icon={Bug} />
                                 </div>
 
-                                <div className="space-y-3 text-sm">
-                                    <div>
-                                        <div className="text-xs text-slate-400 mb-1.5">Provider</div>
-                                        <div className="inline-flex rounded-full bg-slate-900/80 border border-slate-700/80 p-1">
-                                            <button
-                                                onClick={() => setProvider("openai")}
-                                                className={`px-3 py-1.5 rounded-full text-xs font-medium flex items-center gap-1.5 ${provider === "openai"
-                                                    ? "bg-slate-100 text-slate-900"
-                                                    : "text-slate-400"
-                                                    }`}
-                                            >
-                                                <Sparkles className="w-3.5 h-3.5" />
-                                                OpenAI
-                                            </button>
-                                            <button
-                                                onClick={() => setProvider("ollama")}
-                                                className={`px-3 py-1.5 rounded-full text-xs font-medium flex items-center gap-1.5 ${provider === "ollama"
-                                                    ? "bg-slate-100 text-slate-900"
-                                                    : "text-slate-400"
-                                                    }`}
-                                            >
-                                                <Cpu className="w-3.5 h-3.5" />
-                                                Ollama
-                                            </button>
-                                        </div>
-                                    </div>
-
-                                    {provider === "openai" ? (
-                                        <>
-                                            <div>
-                                                <div className="text-xs text-slate-400 mb-1.5">
-                                                    OpenAI API Key
-                                                </div>
-                                                <div className="relative">
-                                                    <Key className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-2.5" />
-                                                    <input
-                                                        type="password"
-                                                        value={openaiKey}
-                                                        onChange={(e) => setOpenaiKey(e.target.value)}
-                                                        placeholder="sk-…"
-                                                        className="w-full rounded-xl bg-slate-900/80 border border-slate-700/80 pl-8 pr-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-violet-400/70"
-                                                    />
-                                                </div>
-                                            </div>
-                                            <div>
-                                                <div className="text-xs text-slate-400 mb-1.5">
-                                                    Model
-                                                </div>
-                                                <div className="relative">
-                                                    <select
-                                                        value={openaiModel}
-                                                        onChange={(e) => setOpenaiModel(e.target.value)}
-                                                        className="w-full rounded-xl bg-slate-900/80 border border-slate-700/80 px-3 py-2 pr-7 text-xs text-slate-100 focus:outline-none focus:border-violet-400/70 appearance-none"
-                                                    >
-                                                        <option value="gpt-4o">gpt-4o</option>
-                                                        <option value="gpt-4.1-mini">gpt-4.1-mini</option>
-                                                        <option value="gpt-4.1">gpt-4.1</option>
-                                                    </select>
-                                                    <ChevronDown className="w-3 h-3 text-slate-500 absolute right-3 top-3 pointer-events-none" />
-                                                </div>
-                                            </div>
-                                        </>
-                                    ) : (
-                                        <>
-                                            <div>
-                                                <div className="text-xs text-slate-400 mb-1.5">
-                                                    Ollama URL
-                                                </div>
-                                                <input
-                                                    type="text"
-                                                    value={ollamaUrl}
-                                                    onChange={(e) => setOllamaUrl(e.target.value)}
-                                                    className="w-full rounded-xl bg-slate-900/80 border border-slate-700/80 px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-violet-400/70"
-                                                />
-                                            </div>
-                                            <div>
-                                                <div className="flex items-center justify-between mb-1.5">
-                                                    <div className="text-xs text-slate-400">
-                                                        Model
+                                <div className="mt-4 space-y-4">
+                                    {controlTab === "ai" && (
+                                        <div className="rounded-3xl border border-slate-800/70 bg-slate-950/95 p-4 sm:p-5 shadow-[0_18px_45px_rgba(0,0,0,0.75)]">
+                                            <div className="flex items-center justify-between gap-3 mb-4">
+                                                <div>
+                                                    <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">
+                                                        AI Connections
                                                     </div>
-                                                    <button
-                                                        type="button"
-                                                        onClick={fetchOllamaModels}
-                                                        disabled={ollamaModelsLoading}
-                                                        className="text-[10px] px-2 py-0.5 rounded-md border border-slate-700/80 text-slate-300 hover:border-sky-400/70 hover:text-sky-200 transition-colors disabled:opacity-50"
-                                                    >
-                                                        {ollamaModelsLoading ? "Loading..." : "Refresh"}
-                                                    </button>
+                                                    <div className="text-sm font-semibold">Provider & Model</div>
                                                 </div>
-                                                {ollamaModels.length > 0 ? (
-                                                    <div className="relative">
-                                                        <select
-                                                            value={ollamaModel}
-                                                            onChange={(e) => setOllamaModel(e.target.value)}
-                                                            className="w-full rounded-xl bg-slate-900/80 border border-slate-700/80 px-3 py-2 pr-7 text-xs text-slate-100 focus:outline-none focus:border-violet-400/70 appearance-none"
+                                                <Cpu className="w-4 h-4 text-slate-500" />
+                                            </div>
+
+                                            <div className="space-y-3 text-sm">
+                                                <div>
+                                                    <div className="text-xs text-slate-400 mb-1.5">Provider</div>
+                                                    <div className="inline-flex rounded-full bg-slate-900/80 border border-slate-700/80 p-1">
+                                                        <button
+                                                            onClick={() => setProvider("openai")}
+                                                            className={`px-3 py-1.5 rounded-full text-xs font-medium flex items-center gap-1.5 ${provider === "openai"
+                                                                ? "bg-slate-100 text-slate-900"
+                                                                : "text-slate-400"
+                                                                }`}
                                                         >
-                                                            {ollamaModels.map((model) => (
-                                                                <option key={model} value={model}>
-                                                                    {model}
-                                                                </option>
-                                                            ))}
-                                                        </select>
-                                                        <ChevronDown className="w-3 h-3 text-slate-500 absolute right-3 top-3 pointer-events-none" />
+                                                            <Sparkles className="w-3.5 h-3.5" />
+                                                            OpenAI
+                                                        </button>
+                                                        <button
+                                                            onClick={() => setProvider("ollama")}
+                                                            className={`px-3 py-1.5 rounded-full text-xs font-medium flex items-center gap-1.5 ${provider === "ollama"
+                                                                ? "bg-slate-100 text-slate-900"
+                                                                : "text-slate-400"
+                                                                }`}
+                                                        >
+                                                            <Cpu className="w-3.5 h-3.5" />
+                                                            Ollama
+                                                        </button>
                                                     </div>
-                                                ) : (
-                                                    <input
-                                                        type="text"
-                                                        value={ollamaModel}
-                                                        onChange={(e) => setOllamaModel(e.target.value)}
-                                                        placeholder="Click Refresh to load models"
-                                                        className="w-full rounded-xl bg-slate-900/80 border border-slate-700/80 px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-violet-400/70"
-                                                    />
-                                                )}
-                                            </div>
-                                        </>
-                                    )}
-
-                                    <div>
-                                        <div className="flex items-center justify-between mb-1">
-                                            <span className="text-xs text-slate-400">Temperature</span>
-                                            <span className="text-[11px] text-slate-500">
-                                                {temp.toFixed(2)}
-                                            </span>
-                                        </div>
-                                        <input
-                                            type="range"
-                                            min="0"
-                                            max="1"
-                                            step="0.01"
-                                            value={temp}
-                                            onChange={(e) => setTemp(parseFloat(e.target.value))}
-                                            className="w-full h-1.5 rounded-full bg-slate-800 appearance-none cursor-pointer"
-                                            style={{
-                                                background: `linear-gradient(to right, rgba(129,140,248,1) 0%, rgba(56,189,248,1) ${temp * 100
-                                                    }%, rgba(15,23,42,1) ${temp * 100}%, rgba(15,23,42,1) 100%)`,
-                                            }}
-                                        />
-                                    </div>
-
-                                    <button
-                                        type="button"
-                                        onClick={handleTestConnection}
-                                        className="mt-2 inline-flex items-center justify-center w-full rounded-2xl bg-slate-100 text-slate-900 text-xs font-semibold px-3 py-2 hover:bg-white transition-colors"
-                                    >
-                                        <RefreshCw className="w-3.5 h-3.5 mr-1" />
-                                        Test Connection (mock)
-                                    </button>
-                                </div>
-                            </div>
-
-                            <div className="rounded-3xl border border-slate-800/70 bg-slate-950/95 p-4 text-xs text-slate-400 space-y-2">
-                                <div className="font-semibold text-slate-200 flex items-center gap-2">
-                                    <Sparkles className="w-3.5 h-3.5 text-violet-400" />
-                                    Next wiring steps
-                                </div>
-                                <ol className="list-decimal list-inside space-y-1">
-                                    <li>Point this console at your FastAPI chat endpoint.</li>
-                                    <li>Use the provider/model config to build the request body.</li>
-                                    <li>Add streaming later so the messages animate in.</li>
-                                </ol>
-                                <p className="text-[11px] text-slate-500 mt-1">
-                                    For today, this shell is meant to give you the look & feel
-                                    and a safe place to test prompts over Tailscale.
-                                </p>
-                            </div>
-                        </div>
-                    )}
-
-                    {settingsTab === "tailnet" && (
-                        <div className="rounded-3xl border border-slate-800/70 bg-slate-950/95 p-4 sm:p-5 shadow-[0_18px_45px_rgba(0,0,0,0.75)] space-y-3 text-sm">
-                            <div className="flex items-center justify-between gap-3 mb-1">
-                                <div>
-                                    <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">
-                                        Tailnet
-                                    </div>
-                                    <div className="text-sm font-semibold">Server Status</div>
-                                </div>
-                                <button
-                                    type="button"
-                                    onClick={refreshTailnetStats}
-                                    className="inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-full border border-slate-700/80 text-slate-200 hover:border-sky-400/70 hover:text-sky-200 transition-colors"
-                                >
-                                    <RefreshCw className="w-3 h-3" />
-                                    Refresh
-                                </button>
-                            </div>
-
-                            {tailnetLoading && (
-                                <div className="text-xs text-slate-400">Loading tailnet…</div>
-                            )}
-
-                            {tailnetError && (
-                                <div className="text-xs text-red-400">
-                                    Failed to load tailnet summary: {tailnetError}
-                                </div>
-                            )}
-
-                            {tailnetStats && !tailnetLoading && !tailnetError && (
-                                <div className="space-y-1.5 text-xs text-slate-300">
-                                    <div className="flex justify-between">
-                                        <span className="text-slate-400">Devices online</span>
-                                        <span className="font-semibold">
-                                            {tailnetStats.devices_online ?? "?"}
-                                        </span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span className="text-slate-400">Total devices</span>
-                                        <span className="font-semibold">
-                                            {tailnetStats.devices_total ?? "?"}
-                                        </span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span className="text-slate-400">Exit node</span>
-                                        <span className="font-semibold">
-                                            {tailnetStats.exit_node ?? "none"}
-                                        </span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span className="text-slate-400">Last check</span>
-                                        <span className="font-semibold">
-                                            {tailnetStats.last_check ?? "unknown"}
-                                        </span>
-                                    </div>
-                                </div>
-                            )}
-
-                            {!tailnetStats && !tailnetLoading && !tailnetError && (
-                                <div className="text-xs text-slate-500">
-                                    No tailnet summary loaded yet. Click Refresh to query
-                                    {` ${API_BASE}/api/system/tailscale/summary`}.
-                                </div>
-                            )}
-                        </div>
-                    )}
-
-                    {settingsTab === "users" && (
-                        <div className="rounded-3xl border border-slate-800/70 bg-slate-950/95 p-4 sm:p-5 shadow-[0_18px_45px_rgba(0,0,0,0.75)] space-y-3 text-sm">
-                            <div className="flex items-center justify-between gap-3 mb-1">
-                                <div>
-                                    <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">
-                                        Users
-                                    </div>
-                                    <div className="text-sm font-semibold">Tailnet Members</div>
-                                </div>
-                                <button
-                                    type="button"
-                                    onClick={refreshUserSummary}
-                                    className="inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-full border border-slate-700/80 text-slate-200 hover:border-emerald-400/70 hover:text-emerald-200 transition-colors"
-                                >
-                                    <RefreshCw className="w-3 h-3" />
-                                    Refresh
-                                </button>
-                            </div>
-
-                            {userLoading && (
-                                <div className="text-xs text-slate-400">Loading users…</div>
-                            )}
-
-                            {userError && (
-                                <div className="text-xs text-red-400">
-                                    Failed to load user summary: {userError}
-                                </div>
-                            )}
-
-                            {userSummary && !userLoading && !userError && (
-                                <div className="space-y-3 text-xs text-slate-300">
-                                    <div className="flex justify-between">
-                                        <span className="text-slate-400">Total users</span>
-                                        <span className="font-semibold">
-                                            {userSummary.total ?? "?"}
-                                        </span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span className="text-slate-400">Active</span>
-                                        <span className="font-semibold text-emerald-400">
-                                            {userSummary.active ?? "?"}
-                                        </span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span className="text-slate-400">Admins</span>
-                                        <span className="font-semibold text-violet-300">
-                                            {userSummary.admins ?? "?"}
-                                        </span>
-                                    </div>
-
-                                    {Array.isArray(userSummary.users) && userSummary.users.length > 0 && (
-                                        <div className="mt-2 space-y-1.5">
-                                            {userSummary.users.slice(0, 4).map((u, idx) => (
-                                                <div
-                                                    key={u.id ?? idx}
-                                                    className="flex items-center justify-between rounded-xl bg-slate-900/80 border border-slate-800/80 px-3 py-1.5"
-                                                >
-                                                    <div className="flex flex-col">
-                                                        <span className="font-medium text-slate-100">
-                                                            {u.name ?? u.email ?? "Unknown"}
-                                                        </span>
-                                                        <span className="text-[11px] text-slate-500">
-                                                            {u.email ?? "no-email"} • {u.role ?? "user"}
-                                                        </span>
-                                                    </div>
-                                                    {u.active && (
-                                                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                                                    )}
                                                 </div>
-                                            ))}
+
+                                                {provider === "openai" ? (
+                                                    <>
+                                                        <div>
+                                                            <div className="text-xs text-slate-400 mb-1.5">
+                                                                OpenAI API Key
+                                                            </div>
+                                                            <div className="relative">
+                                                                <Key className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-2.5" />
+                                                                <input
+                                                                    type="password"
+                                                                    value={openaiKey}
+                                                                    onChange={(e) => setOpenaiKey(e.target.value)}
+                                                                    placeholder="sk-…"
+                                                                    className="w-full rounded-xl bg-slate-900/80 border border-slate-700/80 pl-8 pr-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-violet-400/70"
+                                                                />
+                                                            </div>
+                                                        </div>
+                                                        <div>
+                                                            <div className="text-xs text-slate-400 mb-1.5">
+                                                                Model
+                                                            </div>
+                                                            <div className="relative">
+                                                                <select
+                                                                    value={openaiModel}
+                                                                    onChange={(e) => setOpenaiModel(e.target.value)}
+                                                                    className="w-full rounded-xl bg-slate-900/80 border border-slate-700/80 px-3 py-2 pr-7 text-xs text-slate-100 focus:outline-none focus:border-violet-400/70 appearance-none"
+                                                                >
+                                                                    <option value="gpt-4o">gpt-4o</option>
+                                                                    <option value="gpt-4.1-mini">gpt-4.1-mini</option>
+                                                                    <option value="gpt-4.1">gpt-4.1</option>
+                                                                </select>
+                                                                <ChevronDown className="w-3 h-3 text-slate-500 absolute right-3 top-3 pointer-events-none" />
+                                                            </div>
+                                                        </div>
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <div>
+                                                            <div className="text-xs text-slate-400 mb-1.5">
+                                                                Ollama URL
+                                                            </div>
+                                                            <input
+                                                                type="text"
+                                                                value={ollamaUrl}
+                                                                onChange={(e) => setOllamaUrl(e.target.value)}
+                                                                className="w-full rounded-xl bg-slate-900/80 border border-slate-700/80 px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-violet-400/70"
+                                                            />
+                                                        </div>
+                                                        <div>
+                                                            <div className="flex items-center justify-between mb-1.5">
+                                                                <div className="text-xs text-slate-400">
+                                                                    Model
+                                                                </div>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={fetchOllamaModels}
+                                                                    disabled={ollamaModelsLoading}
+                                                                    className="text-[10px] px-2 py-0.5 rounded-md border border-slate-700/80 text-slate-300 hover:border-sky-400/70 hover:text-sky-200 transition-colors disabled:opacity-50"
+                                                                >
+                                                                    {ollamaModelsLoading ? "Loading..." : "Refresh"}
+                                                                </button>
+                                                            </div>
+                                                            {ollamaModels.length > 0 ? (
+                                                                <div className="relative">
+                                                                    <select
+                                                                        value={ollamaModel}
+                                                                        onChange={(e) => setOllamaModel(e.target.value)}
+                                                                        className="w-full rounded-xl bg-slate-900/80 border border-slate-700/80 px-3 py-2 pr-7 text-xs text-slate-100 focus:outline-none focus:border-violet-400/70 appearance-none"
+                                                                    >
+                                                                        {ollamaModels.map((model) => (
+                                                                            <option key={model} value={model}>
+                                                                                {model}
+                                                                            </option>
+                                                                        ))}
+                                                                    </select>
+                                                                    <ChevronDown className="w-3 h-3 text-slate-500 absolute right-3 top-3 pointer-events-none" />
+                                                                </div>
+                                                            ) : (
+                                                                <input
+                                                                    type="text"
+                                                                    value={ollamaModel}
+                                                                    onChange={(e) => setOllamaModel(e.target.value)}
+                                                                    placeholder="Click Refresh to load models"
+                                                                    className="w-full rounded-xl bg-slate-900/80 border border-slate-700/80 px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-violet-400/70"
+                                                                />
+                                                            )}
+                                                        </div>
+                                                    </>
+                                                )}
+
+                                                <div>
+                                                    <div className="flex items-center justify-between mb-1">
+                                                        <span className="text-xs text-slate-400">Temperature</span>
+                                                        <span className="text-[11px] text-slate-500">
+                                                            {temp.toFixed(2)}
+                                                        </span>
+                                                    </div>
+                                                    <input
+                                                        type="range"
+                                                        min="0"
+                                                        max="1"
+                                                        step="0.01"
+                                                        value={temp}
+                                                        onChange={(e) => setTemp(parseFloat(e.target.value))}
+                                                        className="w-full h-1.5 rounded-full bg-slate-800 appearance-none cursor-pointer"
+                                                        style={{
+                                                            background: `linear-gradient(to right, rgba(129,140,248,1) 0%, rgba(56,189,248,1) ${temp * 100}%, rgba(15,23,42,1) ${temp * 100}%, rgba(15,23,42,1) 100%)`,
+                                                        }}
+                                                    />
+                                                </div>
+
+                                                <button
+                                                    type="button"
+                                                    onClick={handleTestConnection}
+                                                    className="mt-2 inline-flex items-center justify-center w-full rounded-2xl bg-slate-100 text-slate-900 text-xs font-semibold px-3 py-2 hover:bg-white transition-colors"
+                                                >
+                                                    <RefreshCw className="w-3.5 h-3.5 mr-1" />
+                                                    Test Connection (mock)
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {controlTab === "tailnet" && (
+                                        <div className="p-3 rounded-2xl bg-slate-900/70 border border-slate-800 space-y-3 text-xs">
+                                            <div className="flex items-center justify-between">
+                                                <span className="text-xs font-semibold text-slate-200">TailNet Status</span>
+                                                <span className="flex items-center gap-1 text-[11px] text-emerald-400">
+                                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                                                    {tailnetHealthy === false
+                                                        ? "issues"
+                                                        : tailnetHealthy === true
+                                                            ? "healthy"
+                                                            : "idle"}
+                                                </span>
+                                            </div>
+                                            <p className="text-[11px] text-slate-400">
+                                                This pane will eventually surface live TailScale node health, latency, and reachability.
+                                            </p>
+                                            {tailnetError && (
+                                                <div className="text-[11px] text-rose-400">
+                                                    Failed to load: {tailnetError}
+                                                </div>
+                                            )}
+                                            {tailnetLoading && (
+                                                <div className="text-[11px] text-slate-400">Refreshing TailNet preview…</div>
+                                            )}
+                                            {tailnetStats && !tailnetLoading && !tailnetError && (
+                                                <div className="space-y-1 text-xs text-slate-300">
+                                                    <div className="flex justify-between">
+                                                        <span className="text-slate-400">Devices online</span>
+                                                        <span className="font-semibold">{tailnetStats.devices_online ?? "?"}</span>
+                                                    </div>
+                                                    <div className="flex justify-between">
+                                                        <span className="text-slate-400">Total devices</span>
+                                                        <span className="font-semibold">{tailnetStats.devices_total ?? "?"}</span>
+                                                    </div>
+                                                    <div className="flex justify-between">
+                                                        <span className="text-slate-400">Exit node</span>
+                                                        <span className="font-semibold">{tailnetStats.exit_node ?? "none"}</span>
+                                                    </div>
+                                                    <div className="flex justify-between">
+                                                        <span className="text-slate-400">Last check</span>
+                                                        <span className="font-semibold">{tailnetStats.last_check ?? "unknown"}</span>
+                                                    </div>
+                                                </div>
+                                            )}
+                                            <button
+                                                type="button"
+                                                onClick={refreshTailnetStats}
+                                                className="w-full rounded-xl border border-slate-700/80 px-3 py-2 text-[11px] text-slate-200 hover:border-sky-400/70 hover:text-sky-200 transition-colors"
+                                            >
+                                                Refresh TailNet
+                                            </button>
+                                        </div>
+                                    )}
+
+                                    {controlTab === "laz" && (
+                                        <div className="p-4 rounded-2xl bg-slate-900/70 border border-purple-500/40 space-y-3">
+                                            <div className="flex items-center justify-between gap-3">
+                                                <div>
+                                                    <h3 className="text-sm font-semibold text-slate-50">Lazlo Mode</h3>
+                                                    <p className="text-xs text-slate-400">
+                                                        Toggle a playful systems-engineer persona for the AI: eccentric, tailnet-obsessed, but technically accurate.
+                                                    </p>
+                                                </div>
+                                                <button
+                                                    onClick={() => setLazloMode((prev) => !prev)}
+                                                    className={
+                                                        "px-4 py-1.5 rounded-full text-xs font-semibold transition-all " +
+                                                        (lazloMode
+                                                            ? "bg-purple-500 text-white shadow-[0_0_18px_rgba(168,85,247,0.7)]"
+                                                            : "bg-slate-800 text-slate-300 border border-slate-600")
+                                                    }
+                                                >
+                                                    {lazloMode ? "ON" : "OFF"}
+                                                </button>
+                                            </div>
+                                            <p className="text-[11px] text-slate-500">
+                                                When ON, future API calls from this console should include a Lazlo-flavored system prompt. For now, this just tracks state in the UI.
+                                            </p>
+                                        </div>
+                                    )}
+
+                                    {controlTab === "provider" && (
+                                        <div className="p-4 rounded-2xl bg-slate-900/70 border border-slate-700 space-y-3">
+                                            <h3 className="text-sm font-semibold text-slate-50">Routing Presets</h3>
+                                            <p className="text-xs text-slate-400">
+                                                Quick shortcuts for how this console should talk to your models.
+                                            </p>
+                                            <div className="grid grid-cols-3 gap-2 text-xs">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        setProvider("openai");
+                                                        setOpenaiModel("gpt-4o");
+                                                        setTemp(0.3);
+                                                    }}
+                                                    className="px-3 py-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 border border-slate-600 text-slate-100"
+                                                >
+                                                    Steady Ops
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        setProvider("ollama");
+                                                        setOllamaModel("llama3");
+                                                        setTemp(0.7);
+                                                    }}
+                                                    className="px-3 py-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 border border-slate-600 text-slate-100"
+                                                >
+                                                    Local Playground
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        setProvider("openai");
+                                                        setOpenaiModel("gpt-4o");
+                                                        setTemp(0.95);
+                                                    }}
+                                                    className="px-3 py-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 border border-purple-500/60 text-slate-100"
+                                                >
+                                                    Neon Chat
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {controlTab === "bug" && (
+                                        <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2">
+                                            <h3 className="text-sm font-semibold text-slate-50">Bug Surface</h3>
+                                            <p className="text-xs text-slate-400">
+                                                Type in the chat box and hit <span className="font-semibold text-slate-200">Log bug</span> to capture glitches and ideas below.
+                                            </p>
                                         </div>
                                     )}
                                 </div>
-                            )}
-
-                            {!userSummary && !userLoading && !userError && (
-                                <div className="text-xs text-slate-500">
-                                    No user data yet. Click Refresh to query
-                                    {` ${API_BASE}/api/users/admin/summary`}.
-                                </div>
-                            )}
-                        </div>
-                    )}
+                            </>
+                        )}
+                    </div>
                 </aside>
+
             </main>
         </div>
     );
-};
-
-export default ChatOpsConsole;
+}; export default ChatOpsConsole;

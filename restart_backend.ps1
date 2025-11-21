@@ -1,27 +1,45 @@
-# Stop any running backend
-$procs = Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*fastapi-backend*main.py*' }
-foreach ($p in $procs) {
-    try {
-        Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
-        Write-Output "Stopped PID $($p.ProcessId)"
-    } catch {}
+# restart_backend.ps1
+# Quickly restart the FastAPI backend (uvicorn).
+
+$ErrorActionPreference = "Stop"
+
+Write-Host "=== Restarting FastAPI backend ===" -ForegroundColor Cyan
+
+$ScriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
+$backendDir = Join-Path $ScriptDir "fastapi-backend"
+
+if (!(Test-Path $backendDir)) {
+    Write-Host "ERROR: fastapi-backend directory not found at $backendDir" -ForegroundColor Red
+    exit 1
 }
+
+# Kill existing uvicorn processes
+Write-Host "Stopping existing uvicorn processes (if any)..." -ForegroundColor Yellow
+Get-Process -Name "uvicorn" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 
 Start-Sleep -Seconds 1
 
-# Start backend
-$pythonPath = "C:/Users/Chance/AppData/Local/Programs/Python/Python312/python.exe"
-$mainPath = "c:\Users\Chance\Downloads\fastapi-backend\main.py"
+# Start new backend window
+$backendCommand = @"
+cd "$backendDir"
+Write-Host "Backend working dir: $(Get-Location)" -ForegroundColor DarkGray
 
-Start-Process -FilePath $pythonPath -ArgumentList $mainPath -WindowStyle Hidden
-Write-Output "Backend started"
-
-Start-Sleep -Seconds 2
-
-# Verify health
-try {
-    $health = (Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8000/api/health).Content
-    Write-Output "Health check: $health"
-} catch {
-    Write-Output "Health check failed: $($_.Exception.Message)"
+if (Test-Path ".\venv\Scripts\Activate.ps1") {
+    Write-Host "Activating virtualenv..." -ForegroundColor DarkGray
+    . .\venv\Scripts\Activate.ps1
 }
+
+Write-Host "Running: uvicorn main:app --host 0.0.0.0 --port 8088 --reload" -ForegroundColor DarkGray
+uvicorn main:app --host 0.0.0.0 --port 8088 --reload
+"@
+
+$backendArgs = @(
+    "-NoExit",
+    "-Command",
+    $backendCommand
+)
+
+Start-Process -FilePath "powershell" -ArgumentList $backendArgs `
+    -WindowStyle Minimized
+
+Write-Host "Backend restart requested - new server window launched." -ForegroundColor Green

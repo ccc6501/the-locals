@@ -25,7 +25,10 @@ import {
     User,
     Bug,
     Trash2,
+    Bot,
+    UserCircle,
 } from "lucide-react";
+import BotBadge from "./components/Brand/BotBadge";
 import ChatRoomList from "./ChatRoomList";
 
 const nowTime = () =>
@@ -69,6 +72,26 @@ const getUserColor = (userName) => {
     return colors[Math.abs(hash) % colors.length];
 };
 
+const normalizeServerMessage = (msg) => {
+    const timestamp = msg.createdAt || msg.created_at || msg.time || new Date().toISOString();
+    const role = msg.role || (msg.authorTag === "CC" ? "user" : "assistant");
+    const safeText = msg.text ?? msg.content ?? "";
+
+    return {
+        id: msg.id || `${role}-${timestamp}-${Math.random()}`,
+        role,
+        text: safeText,
+        author: msg.author || (role === "user" ? "chance" : "The Local"),
+        authorTag: msg.authorTag || (role === "user" ? "CC" : "TL"),
+        user_name: msg.user_name,
+        createdAt: timestamp,
+        time: new Date(timestamp).toLocaleTimeString("en-US", {
+            hour: "numeric",
+            minute: "2-digit",
+        }),
+    };
+};
+
 const ChatOpsConsole = () => {
     // Room state for group chat
     const [currentRoom, setCurrentRoom] = useState({ id: "general", name: "General" });
@@ -83,19 +106,30 @@ const ChatOpsConsole = () => {
 
     const [messages, setMessages] = useState([
         {
+            id: "welcome",
             role: "assistant",
+            author: "The Local",
+            authorTag: "TL",
+            user_name: "The Local",
             content:
-                "Welcome to ChatOps Neon. This shell mirrors your Tailnet brain's routing, AI, and bug surface so every test feels like the real deal.",
+                "Hey! Welcome to The Local ? your Tailnet hangout. Chat with friends, ask me anything about the system, or just hang out. I'm always here.",
+            text:
+                "Hey! Welcome to The Local ? your Tailnet hangout. Chat with friends, ask me anything about the system, or just hang out. I'm always here.",
             time: nowTime(),
+            createdAt: new Date().toISOString(),
         },
     ]);
-    const [inputMessage, setInputMessage] = useState("");
+    const [pendingMessage, setPendingMessage] = useState("");
     const [isThinking, setIsThinking] = useState(false);
     const inputRef = React.useRef(null);
 
     // Load settings from localStorage on mount
     const [provider, setProvider] = useState(() => {
-        return localStorage.getItem("chatops_provider") || "openai";
+        return (
+            localStorage.getItem("theLocal.provider") ||
+            localStorage.getItem("chatops_provider") ||
+            "openai"
+        );
     });
     const [openaiKey, setOpenaiKey] = useState(() => {
         return localStorage.getItem("chatops_openai_key") || "";
@@ -107,7 +141,11 @@ const ChatOpsConsole = () => {
         return localStorage.getItem("chatops_ollama_url") || "http://localhost:11434";
     });
     const [ollamaModel, setOllamaModel] = useState(() => {
-        return localStorage.getItem("chatops_ollama_model") || "glm4:latest";
+        return (
+            localStorage.getItem("theLocal.ollamaModel") ||
+            localStorage.getItem("chatops_ollama_model") ||
+            "glm4:latest"
+        );
     });
     const [temp, setTemp] = useState(() => {
         const saved = localStorage.getItem("chatops_temperature");
@@ -140,18 +178,28 @@ const ChatOpsConsole = () => {
     });
     const [bulletinInput, setBulletinInput] = useState("");
 
+    // Dashboard invite card collapse state
+    const [inviteCardCollapsed, setInviteCardCollapsed] = useState(() => {
+        const saved = localStorage.getItem("dashboard.inviteCardCollapsed");
+        return saved === "true";
+    });
+
     // Tailnet stats
     const [tailnetStats, setTailnetStats] = useState(null);
     const [tailnetLoading, setTailnetLoading] = useState(false);
     const [tailnetError, setTailnetError] = useState(null);
+    const [tailnetStatus, setTailnetStatus] = useState(() => {
+        return localStorage.getItem("theLocal.tailnetStatus") || "unknown";
+    });
 
     // Ollama models
     const [ollamaModels, setOllamaModels] = useState([]);
     const [ollamaModelsLoading, setOllamaModelsLoading] = useState(false);
+    const [ollamaError, setOllamaError] = useState(null);
+    const [ollamaStatus, setOllamaStatus] = useState("unknown");
 
     // Status tracking for header
     const [lastChatOk, setLastChatOk] = useState(null); // true/false/null
-    const [tailnetHealthy, setTailnetHealthy] = useState(null);
 
     // Mode presets
     const [mode, setMode] = useState("default");
@@ -159,6 +207,7 @@ const ChatOpsConsole = () => {
     // Persist settings to localStorage
     React.useEffect(() => {
         localStorage.setItem("chatops_provider", provider);
+        localStorage.setItem("theLocal.provider", provider);
     }, [provider]);
 
     React.useEffect(() => {
@@ -175,6 +224,7 @@ const ChatOpsConsole = () => {
 
     React.useEffect(() => {
         localStorage.setItem("chatops_ollama_model", ollamaModel);
+        localStorage.setItem("theLocal.ollamaModel", ollamaModel);
     }, [ollamaModel]);
 
     React.useEffect(() => {
@@ -188,6 +238,20 @@ const ChatOpsConsole = () => {
     React.useEffect(() => {
         localStorage.setItem("chatops_bulletin_posts", JSON.stringify(bulletinPosts));
     }, [bulletinPosts]);
+
+    React.useEffect(() => {
+        localStorage.setItem("dashboard.inviteCardCollapsed", inviteCardCollapsed.toString());
+    }, [inviteCardCollapsed]);
+
+    React.useEffect(() => {
+        localStorage.setItem("theLocal.tailnetStatus", tailnetStatus);
+    }, [tailnetStatus]);
+
+    // Auto-sync Ollama models and Tailnet status on mount
+    React.useEffect(() => {
+        refreshOllamaModels();
+        refreshTailnetStats();
+    }, []);
 
     // Auto-scroll to bottom when messages change
     React.useEffect(() => {
@@ -207,16 +271,9 @@ const ChatOpsConsole = () => {
                 if (cancelled) return;
 
                 // Convert backend messages to UI format
-                const formattedMessages = data.map(msg => ({
-                    role: msg.role,
-                    content: msg.content,
-                    user_name: msg.user_name,
-                    time: new Date(msg.created_at).toLocaleTimeString("en-US", {
-                        hour: "numeric",
-                        minute: "2-digit",
-                    }),
-                    id: msg.id,
-                }));
+                const formattedMessages = Array.isArray(data)
+                    ? data.map(normalizeServerMessage)
+                    : [];
 
                 setMessages(formattedMessages);
                 const maxId = data.length ? Math.max(...data.map(m => m.id)) : null;
@@ -254,18 +311,13 @@ const ChatOpsConsole = () => {
                 if (data.length === 0) return;
 
                 // Convert and append new messages
-                const newMessages = data.map(msg => ({
-                    role: msg.role,
-                    content: msg.content,
-                    user_name: msg.user_name,
-                    time: new Date(msg.created_at).toLocaleTimeString("en-US", {
-                        hour: "numeric",
-                        minute: "2-digit",
-                    }),
-                    id: msg.id,
-                }));
-
-                setMessages(prev => [...prev, ...newMessages]);
+                const newMessages = Array.isArray(data) ? data.map(normalizeServerMessage) : [];
+                if (newMessages.length) {
+                    setMessages(prev => {
+                        const unseen = newMessages.filter(nm => !prev.some(pm => pm.id === nm.id));
+                        return unseen.length ? [...prev, ...unseen] : prev;
+                    });
+                }
                 const maxId = Math.max(...data.map(m => m.id));
                 setLastMessageId(maxId);
             } catch (err) {
@@ -277,7 +329,7 @@ const ChatOpsConsole = () => {
     }, [currentRoom.id, lastMessageId, isLoadingMessages]);
 
     const handleSendMessage = async () => {
-        const value = inputMessage.trim();
+        const value = pendingMessage.trim();
         if (!value || isThinking) return;
 
         // Auto-fallback: no OpenAI key → use Ollama
@@ -285,17 +337,32 @@ const ChatOpsConsole = () => {
         if (provider === "openai" && !openaiKey) {
             effectiveProvider = "ollama";
         }
+        let selectedModel = effectiveProvider === "openai" ? openaiModel : ollamaModel;
+        if (
+            effectiveProvider === "ollama" &&
+            (!selectedModel || !ollamaModels.includes(selectedModel))
+        ) {
+            console.warn("Ollama model missing or stale, falling back to OpenAI");
+            effectiveProvider = "openai";
+            selectedModel = openaiModel;
+        }
 
         // clear prior error
         setError(null);
 
         const userMessage = {
+            id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
             role: "user",
+            author: "chance",
+            authorTag: "CC",
+            user_name: "chance",
             content: value,
+            text: value,
             time: nowTime(),
+            createdAt: new Date().toISOString(),
         };
         setMessages((prev) => [...prev, userMessage]);
-        setInputMessage("");
+        setPendingMessage("");
         setIsThinking(true);
 
         // Dismiss keyboard on mobile
@@ -308,13 +375,13 @@ const ChatOpsConsole = () => {
             const saveRes = await fetch(`${API_BASE}/chat/rooms/${currentRoom.id}/messages`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    content: value,
-                    role: "user",
-                    lazlo_mode: lazloMode,
-                    model: effectiveProvider === "openai" ? openaiModel : ollamaModel,
-                }),
-            });
+                    body: JSON.stringify({
+                        content: value,
+                        role: "user",
+                        lazlo_mode: lazloMode,
+                        model: selectedModel,
+                    }),
+                });
 
             if (!saveRes.ok) {
                 console.warn("Failed to save message to backend:", saveRes.status);
@@ -330,11 +397,11 @@ const ChatOpsConsole = () => {
                     effectiveProvider === "openai"
                         ? {
                             api_key: openaiKey || undefined,
-                            model: openaiModel,
+                            model: selectedModel,
                         }
                         : {
                             base_url: ollamaUrl,
-                            model: ollamaModel,
+                            model: selectedModel,
                         },
             };
 
@@ -352,25 +419,33 @@ const ChatOpsConsole = () => {
 
             const data = await res.json();
 
-            const replyText =
-                data.reply ||
-                data.message ||
-                data.content ||
-                (typeof data === "string" ? data : JSON.stringify(data, null, 2));
+            const assistantText =
+                (data && typeof data === "object" && (data.text || data.content)) ||
+                (Array.isArray(data.choices) && data.choices[0]?.message?.content) ||
+                (typeof data === "string" ? data : "");
+            const safeAssistantText = String(assistantText || "").trim();
 
-            const modelLabel =
-                effectiveProvider === "openai"
-                    ? `${effectiveProvider}:${openaiModel}`
-                    : `${effectiveProvider}:${ollamaModel}`;
-
-            const aiReply = `${replyText}\n\n— [${modelLabel} • temp=${temp.toFixed(2)}]`;
-
-            const aiMessage = {
+            const assistantMessage = {
+                id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
                 role: "assistant",
-                content: aiReply,
+                author: "The Local",
+                authorTag: "TL",
+                text: safeAssistantText,
                 time: nowTime(),
+                createdAt: new Date().toISOString(),
             };
-            setMessages((prev) => [...prev, aiMessage]);
+
+            const history =
+                (Array.isArray(data.history) && data.history) ||
+                (Array.isArray(data.messages) && data.messages) ||
+                null;
+
+            if (history && history.length > 0) {
+                setMessages(history.map(normalizeServerMessage));
+            } else {
+                setMessages((prev) => [...prev, assistantMessage]);
+            }
+
             setLastChatOk(true);
 
             // STEP 3: Save AI response to backend
@@ -378,44 +453,48 @@ const ChatOpsConsole = () => {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    content: aiReply,
+                    content: assistantMessage.text,
                     role: "assistant",
                     lazlo_mode: lazloMode,
-                    model: effectiveProvider === "openai" ? openaiModel : ollamaModel,
+                    model: selectedModel,
                 }),
             });
 
         } catch (err) {
             console.error("Chat API error:", err);
-            setError(err.message || "Unknown error");
-            setLastChatOk(false);
+        setError(err.message || "Unknown error");
+        setLastChatOk(false);
 
-            setMessages((prev) => [
-                ...prev,
-                {
-                    role: "assistant",
-                    content: `⚠️ Chat call failed.
+        setMessages((prev) => [
+            ...prev,
+            {
+                id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
+                role: "assistant",
+                author: "The Local",
+                authorTag: "TL",
+                text: `⚠️ Chat call failed.
 
 Endpoint: ${API_BASE}/api/chat/chat
 Error: ${err.message || err}`,
-                    time: nowTime(),
-                },
-            ]);
-        } finally {
-            setIsThinking(false);
-        }
+                time: nowTime(),
+                createdAt: new Date().toISOString(),
+            },
+        ]);
+    } finally {
+        setIsThinking(false);
+    }
     };
 
     const handleComposerKeyDown = (e) => {
-        if (e.key === "Enter" && !e.shiftKey) {
+        if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
             e.preventDefault();
-            if (!inputMessage?.trim()) return;
+            if (!pendingMessage?.trim()) return;
             handleSendMessage();
         }
     };
 
     const handleLogBug = () => {
-        const text = (inputMessage || "").trim();
+        const text = (pendingMessage || "").trim();
         if (!text) return;
 
         const now = new Date();
@@ -432,7 +511,7 @@ Error: ${err.message || err}`,
         ]);
 
         setBugStatus("saved");
-        setInputMessage("");
+        setPendingMessage("");
         setControlTab("bug");
 
         setTimeout(() => setBugStatus(null), 2500);
@@ -459,12 +538,12 @@ Error: ${err.message || err}`,
             }
             const data = await res.json();
             setTailnetStats(data);
-            setTailnetHealthy(true); // Mark Tailnet as healthy
+            setTailnetStatus("online"); // Mark Tailnet as healthy
         } catch (err) {
             console.error("Tailnet stats error:", err);
             setTailnetError(err.message || "Unknown error");
             setTailnetStats(null);
-            setTailnetHealthy(false); // Mark Tailnet as unhealthy
+            setTailnetStatus("offline"); // Mark Tailnet as unhealthy
         } finally {
             setTailnetLoading(false);
         }
@@ -481,40 +560,27 @@ Error: ${err.message || err}`,
                 throw new Error(`HTTP ${res.status}`);
             }
             const data = await res.json();
-            setOllamaModels(data.models || []);
-
-            // If current model isn't in the list and there are models, select the first one
-            if (data.models && data.models.length > 0 && !data.models.includes(ollamaModel)) {
-                setOllamaModel(data.models[0]);
+            const models = data.models || [];
+            setOllamaModels(models);
+            if (models.length === 0) {
+                setOllamaError(
+                    "No Ollama models. Start Ollama then click Refresh Models in Settings."
+                );
+                setOllamaStatus("offline");
+            } else {
+                setOllamaError(null); // Clear errors on success
+                setOllamaStatus("online");
+                if (!models.includes(ollamaModel)) {
+                    setOllamaModel(models[0]);
+                }
             }
         } catch (err) {
             console.error("Ollama models error:", err);
             setOllamaModels([]);
-        } finally {
-            setOllamaModelsLoading(false);
-        }
-    };
-
-    const fetchOllamaModels = async () => {
-        setOllamaModelsLoading(true);
-        try {
-            const res = await fetch(
-                `${API_BASE}/api/chat/ollama/models?base_url=${encodeURIComponent(ollamaUrl)}`,
-                { method: "GET" }
+            setOllamaError(
+                "No Ollama models. Start Ollama then click Refresh Models in Settings."
             );
-            if (!res.ok) {
-                throw new Error(`HTTP ${res.status}`);
-            }
-            const data = await res.json();
-            setOllamaModels(data.models || []);
-
-            // If current model isn't in the list and there are models, select the first one
-            if (data.models && data.models.length > 0 && !data.models.includes(ollamaModel)) {
-                setOllamaModel(data.models[0]);
-            }
-        } catch (err) {
-            console.error("Failed to fetch Ollama models:", err);
-            setOllamaModels([]);
+            setOllamaStatus("offline");
         } finally {
             setOllamaModelsLoading(false);
         }
@@ -542,37 +608,111 @@ Error: ${err.message || err}`,
             <header className="flex-none border-b border-slate-800/50 bg-slate-950/98 backdrop-blur-xl">
                 <div className="mx-auto max-w-6xl px-4 py-3 flex items-center justify-between gap-3">
                     <div className="flex items-center gap-3">
-                        <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-violet-500 to-sky-500 flex items-center justify-center shadow-lg shadow-violet-500/20">
-                            <Shield className="w-5 h-5 text-white" />
+                        <div className="flex items-center gap-3">
+                            <BotBadge />
+                            <div>
+                                <div className="text-sm font-bold tracking-tight">The Local</div>
+                                <div className="text-[10px] text-slate-400 font-medium">Tailnet Hangout</div>
+                            </div>
                         </div>
-                        <div>
-                            <div className="text-sm font-bold tracking-tight">ChatOps</div>
-                            <div className="text-[10px] text-slate-400 font-medium">AI Infrastructure</div>
-                        </div>
+                        <button
+                            type="button"
+                            onClick={() => setMobileMenuOpen(true)}
+                            className="h-9 w-9 rounded-xl bg-slate-900/80 border border-slate-700/70 flex items-center justify-center"
+                            aria-label="Open menu"
+                        >
+                            <Menu className="w-4 h-4 text-slate-100" />
+                        </button>
                     </div>
 
                     {/* Status Chips */}
                     <div className="flex items-center gap-2 text-xs">
-                        {/* API Status */}
-                        <div className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border transition-all ${provider === 'openai' && !openaiKey ? 'bg-amber-500/10 border-amber-500/30' :
-                            provider === 'ollama' && ollamaModels.length === 0 ? 'bg-amber-500/10 border-amber-500/30' :
-                                lastChatOk === true ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-slate-800/50 border-slate-700/50'
-                            }`}>
-                            <Cpu className={`w-3.5 h-3.5 ${provider === 'openai' && !openaiKey ? 'text-amber-400' :
-                                provider === 'ollama' && ollamaModels.length === 0 ? 'text-amber-400' :
-                                    lastChatOk === true ? 'text-emerald-400' : 'text-slate-500'
-                                }`} />
-                            <span className="hidden sm:inline text-[11px] font-medium">
-                                {provider === 'openai' ? 'OpenAI' : 'Ollama'}
-                            </span>
+                        {/* AI Provider Status */}
+                        <div
+                            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border transition-all ${
+                                provider === "openai"
+                                    ? !openaiKey
+                                        ? "bg-amber-500/10 border-amber-500/30"
+                                        : lastChatOk === true
+                                            ? "bg-emerald-500/10 border-emerald-500/30"
+                                            : "bg-slate-800/50 border-slate-700/50"
+                                    : ollamaStatus === "online"
+                                        ? "bg-emerald-500/10 border-emerald-500/30"
+                                        : ollamaStatus === "offline"
+                                            ? "bg-amber-500/10 border-amber-500/30"
+                                            : "bg-slate-800/50 border-slate-700/50"
+                            }`}
+                        >
+                            <div className="flex items-center gap-2">
+                                <Cpu
+                                    className={`w-3.5 h-3.5 ${
+                                        provider === "openai"
+                                            ? !openaiKey
+                                                ? "text-amber-400"
+                                                : lastChatOk === true
+                                                    ? "text-emerald-400"
+                                                    : "text-slate-500"
+                                            : ollamaStatus === "online"
+                                                ? "text-emerald-400"
+                                                : ollamaStatus === "offline"
+                                                    ? "text-amber-400"
+                                                    : "text-slate-500"
+                                    }`}
+                                />
+                                <span className="hidden sm:inline text-[11px] font-medium">
+                                    {provider === "openai" ? "OpenAI" : "Ollama"}
+                                </span>
+                            </div>
+                            <div className="flex items-center gap-1">
+                                <span
+                                    className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
+                                        provider === "openai"
+                                            ? lastChatOk === true
+                                                ? "bg-emerald-500/20 text-emerald-400"
+                                                : lastChatOk === false
+                                                    ? "bg-red-500/20 text-red-400"
+                                                    : "bg-slate-500/20 text-slate-400"
+                                            : ollamaStatus === "online"
+                                                ? "bg-emerald-500/20 text-emerald-400"
+                                                : ollamaStatus === "offline"
+                                                    ? "bg-red-500/20 text-red-400"
+                                                    : "bg-slate-500/20 text-slate-400"
+                                    }`}
+                                >
+                                    {provider === "openai"
+                                        ? lastChatOk === true
+                                            ? "Online"
+                                            : lastChatOk === false
+                                                ? "Offline"
+                                                : "Unknown"
+                                        : ollamaStatus === "online"
+                                            ? "Online"
+                                            : ollamaStatus === "offline"
+                                                ? "Offline"
+                                                : "Unknown"}
+                                </span>
+                            </div>
                         </div>
 
                         {/* Tailscale Status */}
-                        <div className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border transition-all ${tailnetHealthy === true ? 'bg-sky-500/10 border-sky-500/30' : 'bg-slate-800/50 border-slate-700/50'
-                            }`}>
-                            <Wifi className={`w-3.5 h-3.5 ${tailnetHealthy === true ? 'text-sky-400' : 'text-slate-500'}`} />
+                        <div
+                            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border transition-all ${
+                                tailnetStatus === "online"
+                                    ? "bg-sky-500/10 border-sky-500/30"
+                                    : "bg-slate-800/50 border-slate-700/50"
+                            }`}
+                        >
+                            <Wifi
+                                className={`w-3.5 h-3.5 ${
+                                    tailnetStatus === "online" ? "text-sky-400" : "text-slate-500"
+                                }`}
+                            />
                             <span className="hidden md:inline text-[11px] font-medium">
-                                {tailnetHealthy ? 'Connected' : 'Offline'}
+                                {tailnetStatus === "online"
+                                    ? "Connected"
+                                    : tailnetStatus === "offline"
+                                        ? "Offline"
+                                        : "Unknown"}
                             </span>
                         </div>
 
@@ -600,7 +740,7 @@ Error: ${err.message || err}`,
                             <div className="flex items-center justify-between mb-6">
                                 <div className="flex items-center gap-2">
                                     <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-violet-500 to-sky-500 flex items-center justify-center">
-                                        <Shield className="w-4 h-4 text-white" />
+                                        <Bot className="w-4 h-4 text-white" />
                                     </div>
                                     <span className="text-sm font-semibold">Menu</span>
                                 </div>
@@ -612,55 +752,71 @@ Error: ${err.message || err}`,
                                 </button>
                             </div>
 
-                            {/* Status visualizers at top */}
-                            <div className="space-y-3 pb-6 border-b border-slate-800/70">
+                            {/* Status HUD */}
+                            <div className="space-y-2.5 pb-4 border-b border-slate-800/70">
+                                {/* Tailnet Status */}
                                 <div className="flex items-center justify-between text-sm">
-                                    <span className="text-slate-500">Provider</span>
-                                    <span className="text-slate-300 font-medium">{provider === 'openai' ? 'OpenAI' : 'Ollama'}</span>
-                                </div>
+                                    <div className="flex items-center gap-2">
+                                        <Wifi className="w-4 h-4 text-slate-500" />
+                                        <span className="text-slate-400">Tailnet</span>
+                                    </div>
+                                <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${tailnetStatus === "online"
+                                    ? 'bg-emerald-500/20 text-emerald-400'
+                                    : tailnetStatus === "offline"
+                                        ? 'bg-red-500/20 text-red-400'
+                                        : 'bg-slate-500/20 text-slate-400'
+                                    }`}>
+                                    {tailnetStatus === "online" ? 'Online' : tailnetStatus === "offline" ? 'Offline' : 'Unknown'}
+                                </span>
+                            </div>
+
+                                {/* AI Provider Status */}
                                 <div className="flex items-center justify-between text-sm">
-                                    <span className="text-slate-500">Room</span>
-                                    <span className="text-slate-300 font-medium">{currentRoom.name}</span>
-                                </div>
-                                <div className="flex items-center justify-between text-sm">
-                                    <span className="text-slate-500">Tailnet</span>
-                                    <span className={`font-medium ${tailnetHealthy ? 'text-sky-400' : 'text-slate-500'}`}>
-                                        {tailnetHealthy ? 'Connected' : 'Unknown'}
-                                    </span>
+                                    <div className="flex items-center gap-2">
+                                        <Cpu className="w-4 h-4 text-slate-500" />
+                                        <span className="text-slate-400">AI Provider</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-slate-300 text-xs">
+                                            {provider === 'openai' ? 'OpenAI' : 'Ollama'}
+                                        </span>
+                                        <span
+                                            className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
+                                                provider === 'openai'
+                                                    ? lastChatOk === true
+                                                        ? 'bg-emerald-500/20 text-emerald-400'
+                                                        : lastChatOk === false
+                                                            ? 'bg-red-500/20 text-red-400'
+                                                            : 'bg-slate-500/20 text-slate-400'
+                                                    : ollamaStatus === 'online'
+                                                        ? 'bg-emerald-500/20 text-emerald-400'
+                                                        : ollamaStatus === 'offline'
+                                                            ? 'bg-red-500/20 text-red-400'
+                                                            : 'bg-slate-500/20 text-slate-400'
+                                            }`}
+                                        >
+                                            {provider === 'openai'
+                                                ? lastChatOk === true
+                                                    ? 'Online'
+                                                    : lastChatOk === false
+                                                        ? 'Offline'
+                                                        : 'Unknown'
+                                                : ollamaStatus === 'online'
+                                                    ? 'Online'
+                                                    : ollamaStatus === 'offline'
+                                                        ? 'Offline'
+                                                        : 'Unknown'}
+                                        </span>
+                                    </div>
                                 </div>
 
-                                {/* Font Size Control */}
-                                <div className="pt-3 border-t border-slate-800/70">
-                                    <label className="block text-xs text-slate-500 mb-2">Chat Text Size</label>
-                                    <div className="flex gap-1.5">
-                                        <button
-                                            onClick={() => setChatSize("small")}
-                                            className={`flex-1 px-2 py-1.5 rounded-lg text-xs font-semibold transition-all ${chatSize === "small"
-                                                ? "bg-gradient-to-r from-purple-600 to-blue-600 text-white"
-                                                : "bg-slate-900/80 border border-slate-700 text-slate-400"
-                                                }`}
-                                        >
-                                            S
-                                        </button>
-                                        <button
-                                            onClick={() => setChatSize("medium")}
-                                            className={`flex-1 px-2 py-1.5 rounded-lg text-xs font-semibold transition-all ${chatSize === "medium"
-                                                ? "bg-gradient-to-r from-purple-600 to-blue-600 text-white"
-                                                : "bg-slate-900/80 border border-slate-700 text-slate-400"
-                                                }`}
-                                        >
-                                            M
-                                        </button>
-                                        <button
-                                            onClick={() => setChatSize("large")}
-                                            className={`flex-1 px-2 py-1.5 rounded-lg text-xs font-semibold transition-all ${chatSize === "large"
-                                                ? "bg-gradient-to-r from-purple-600 to-blue-600 text-white"
-                                                : "bg-slate-900/80 border border-slate-700 text-slate-400"
-                                                }`}
-                                        >
-                                            L
-                                        </button>
+                                {/* Room Counts */}
+                                <div className="flex items-center justify-between text-sm">
+                                    <div className="flex items-center gap-2">
+                                        <MessageSquare className="w-4 h-4 text-slate-500" />
+                                        <span className="text-slate-400">Rooms</span>
                                     </div>
+                                    <span className="text-slate-300 text-xs">1 total • 1 active</span>
                                 </div>
                             </div>
                         </div>
@@ -753,13 +909,27 @@ Error: ${err.message || err}`,
                                 <User className="w-6 h-6" />
                                 <span>Rooms / Users</span>
                             </button>
+
+                            <button
+                                onClick={() => {
+                                    setActiveView("profile");
+                                    setMobileMenuOpen(false);
+                                }}
+                                className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-base font-medium transition-all ${activeView === "profile"
+                                    ? "bg-gradient-to-r from-violet-600 to-sky-600 text-white shadow-lg"
+                                    : "text-slate-300 hover:bg-slate-800/70"
+                                    }`}
+                            >
+                                <UserCircle className="w-6 h-6" />
+                                <span>Profile</span>
+                            </button>
                         </nav>
                     </div>
                 </>
             )}            {/* Global warning banner for API key issues - sits below header */}
             {(() => {
                 const noOpenAI = provider === 'openai' && !openaiKey;
-                const noOllama = provider === 'ollama' && ollamaModels.length === 0;
+                const noOllama = provider === 'ollama' && !!ollamaError;
                 if (noOpenAI || noOllama) {
                     return (
                         <div className="flex-none px-3 sm:px-4 py-2 text-xs bg-amber-900/40 border-b border-amber-600/40 flex items-start gap-2">
@@ -772,7 +942,8 @@ Error: ${err.message || err}`,
                                 )}
                                 {noOllama && (
                                     <span>
-                                        <span className="font-semibold text-amber-200">No Ollama models.</span> Start Ollama then click Refresh Models in Settings.
+                                        <span className="font-semibold text-amber-200">Ollama unavailable.</span>{" "}
+                                        {ollamaError}
                                     </span>
                                 )}
                             </div>
@@ -825,6 +996,12 @@ Error: ${err.message || err}`,
                                 const userColor = m.user_name ? getUserColor(m.user_name) : "from-violet-500 to-sky-500";
                                 const isUser = m.role === "user";
                                 const sizeClass = chatSize === "small" ? "text-xs" : chatSize === "large" ? "text-base" : "text-sm";
+                                const displayText = m.text ?? "";
+                                const timestamp = new Date(m.createdAt ?? m.time ?? Date.now());
+                                const timeLabel = timestamp.toLocaleTimeString("en-US", {
+                                    hour: "numeric",
+                                    minute: "2-digit",
+                                });
 
                                 return (
                                     <div
@@ -835,26 +1012,28 @@ Error: ${err.message || err}`,
                                         <div className={`flex flex-col gap-0.5 justify-end pb-1 min-w-[60px] ${isUser ? "items-end" : "items-start"}`}>
                                             {/* Show username for users, "Assistant" for AI */}
                                             <div className="text-[10px] font-medium text-slate-400">
-                                                {isUser ? (m.user_name || "User") : "Assistant"}
+                                                {isUser ? (m.user_name || "User") : "The Local"}
                                             </div>
                                             <div className="text-[9px] text-slate-500">
-                                                {m.time}
+                                                {timeLabel}
                                             </div>
-                                            {m.model && !isUser && (
-                                                <div className="text-[8px] text-slate-600 font-mono">
-                                                    {m.model.split(':')[0]}
-                                                </div>
-                                            )}
                                         </div>
 
                                         {/* Message Bubble - Clean, no internal metadata */}
                                         <div
-                                            className={`max-w-[70%] rounded-2xl px-4 py-2.5 ${sizeClass} shadow-lg ${isUser
+                                            className={`max-w-[70%] rounded-2xl px-4 py-2.5 ${sizeClass} shadow-lg relative ${isUser
                                                 ? `bg-gradient-to-r ${userColor} text-white rounded-br-sm`
                                                 : "bg-gradient-to-br from-indigo-600/90 to-purple-700/90 border border-indigo-500/30 text-white rounded-bl-sm"
                                                 }`}
                                         >
-                                            <div className="whitespace-pre-wrap leading-relaxed">{m.content}</div>
+                                            {/* Author Badge */}
+                                            <div className={`absolute -top-2 ${isUser ? '-right-2' : '-left-2'} w-7 h-7 rounded-full flex items-center justify-center text-[9px] font-bold shadow-lg ${isUser
+                                                ? 'bg-gradient-to-br from-emerald-500 to-teal-600 text-white'
+                                                : 'bg-gradient-to-br from-violet-500 to-purple-600 text-white'
+                                                }`}>
+                                                {isUser ? 'CC' : 'TL'}
+                                            </div>
+                                            <div className="whitespace-pre-wrap leading-relaxed">{displayText}</div>
                                         </div>
                                     </div>
                                 );
@@ -876,36 +1055,39 @@ Error: ${err.message || err}`,
                             <div ref={messagesEndRef} />
                         </div>
 
-                        {/* Input bar - Sticky at bottom of chat container, 3 lines tall */}
-                        <div className="flex-none border-t border-slate-800/80 bg-slate-950/98 px-3 sm:px-4 py-3">
-                            <div className="flex gap-2.5 items-end">
-                                <textarea
-                                    ref={inputRef}
-                                    rows={3}
-                                    value={inputMessage}
-                                    onChange={(e) => setInputMessage(e.target.value)}
-                                    onKeyDown={handleComposerKeyDown}
-                                    placeholder="Ask about the hub, secrets, or TailNet…"
-                                    className="flex-1 px-4 py-3 bg-slate-800/60 border border-slate-700/60 rounded-2xl text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500 resize-none"
-                                    style={{ WebkitUserSelect: 'text', minHeight: '84px', maxHeight: '120px' }}
-                                />
-                                <button
-                                    onClick={handleSendMessage}
-                                    className="flex items-center justify-center px-4 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-95 shadow-lg shadow-emerald-900/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                                    style={{ minHeight: '84px' }}
-                                    disabled={isThinking}
-                                >
-                                    <Send className="w-5 h-5 text-white" />
-                                </button>
+                        {/* Chat input bar ? iMessage style */}
+                        <div className="w-full border-t border-slate-800 bg-slate-950/95 px-3 pb-safe pt-2">
+                            <div className="flex items-end gap-2 max-w-4xl mx-auto">
+                                <div className="flex-1 relative">
+                                    <textarea
+                                        ref={inputRef}
+                                        value={pendingMessage}
+                                        onChange={(e) => setPendingMessage(e.target.value)}
+                                        rows={1}
+                                        placeholder="Message the room, or type /room or /user to manage spaces."
+                                        onKeyDown={handleComposerKeyDown}
+                                        className="w-full resize-none rounded-2xl bg-slate-900/80 border border-slate-700/70 text-slate-100 text-sm px-4 pr-11 py-2.5 focus:outline-none focus:border-purple-500/60 focus:ring-1 focus:ring-purple-500/40"
+                                    />
+
+                                    <button
+                                        type="button"
+                                        onClick={() => pendingMessage.trim() && handleSendMessage()}
+                                        disabled={!pendingMessage.trim() || isThinking}
+                                        className="absolute right-2 bottom-2.5 h-7 w-7 rounded-full flex items-center justify-center bg-gradient-to-br from-emerald-400 to-cyan-500 disabled:opacity-40 shadow-md"
+                                        aria-label="Send message"
+                                    >
+                                        <Send className="w-4 h-4 text-slate-950" />
+                                    </button>
+                                </div>
                             </div>
                             {error && (
                                 <div className="mt-2 text-[11px] text-red-400 px-1">
                                     Last error from backend: {error}
                                 </div>
                             )}
-                        </div>
 
-                        {/* Bug Log - At bottom of chat - REMOVED */}
+                        </div>
+{/* Bug Log - At bottom of chat - REMOVED */}
                         {/* <section className="border-t border-slate-800/80 bg-slate-950/95 px-3 sm:px-4 py-3">
                             <div className="flex items-center justify-between mb-3">
                                 <div>
@@ -952,18 +1134,6 @@ Error: ${err.message || err}`,
                         </section> */}
                     </section>
 
-                    {/* Floating Burger Button - Bottom Right (Mobile Only) */}
-                    <button
-                        onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-                        className="lg:hidden fixed bottom-24 right-6 z-50 p-4 rounded-full bg-gradient-to-br from-amber-600 to-orange-600 shadow-2xl shadow-amber-900/50 hover:scale-110 active:scale-95 transition-transform"
-                    >
-                        {mobileMenuOpen ? (
-                            <X className="w-6 h-6 text-white" />
-                        ) : (
-                            <Menu className="w-6 h-6 text-white" />
-                        )}
-                    </button>
-
                     {/* Mobile-only view content */}
                     {activeView === 'dashboard' && (
                         <div className="lg:hidden rounded-2xl border border-slate-800/70 bg-slate-950/95 p-4 shadow-[0_18px_45px_rgba(0,0,0,0.75)] overflow-y-auto h-full">
@@ -974,18 +1144,65 @@ Error: ${err.message || err}`,
                             <div className="space-y-4">
                                 {/* Welcome Message */}
                                 <div className="rounded-xl border border-violet-700/50 bg-gradient-to-br from-violet-950/60 to-indigo-950/60 p-4">
-                                    <h3 className="text-sm font-semibold mb-2 text-violet-300">Welcome to The Local Build!</h3>
-                                    <p className="text-xs text-slate-300 mb-3 leading-relaxed">
-                                        Hey! Connect to our Tailscale network to join the chat. Scan the QR code below or visit the URL directly. Once connected, you'll be able to chat with the team and our AI assistants.
+                                    <h3 className="text-base font-semibold mb-2 text-violet-300">You look new here…</h3>
+                                    <p className="text-sm text-slate-300 leading-relaxed">
+                                        Welcome to The Local — a Tailnet hangout where you can chat in shared rooms, slide into DMs, and hang with The Local, our AI who knows the system inside-out and is always down to help, answer questions, or just vibe.
                                     </p>
-                                    <div className="bg-white p-2 rounded-lg inline-block">
-                                        <img
-                                            src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=http://100.88.23.90:5180/"
-                                            alt="QR Code"
-                                            className="w-32 h-32"
-                                        />
-                                    </div>
-                                    <p className="text-xs text-slate-400 mt-2 font-mono">http://100.88.23.90:5180/</p>
+                                </div>
+
+                                {/* Collapsible Connection & Invite Card */}
+                                <div className="rounded-xl border border-slate-800/70 bg-slate-950/60">
+                                    {/* Header - Clickable to toggle */}
+                                    <button
+                                        onClick={() => setInviteCardCollapsed(!inviteCardCollapsed)}
+                                        className="w-full px-4 py-3 flex items-center justify-between text-sm font-semibold hover:bg-slate-900/40 transition-colors rounded-t-xl"
+                                    >
+                                        <span className="flex items-center gap-2">
+                                            <Wifi className="w-4 h-4" />
+                                            {inviteCardCollapsed ? 'Show invite & connection info' : 'Connection & Invite Info'}
+                                        </span>
+                                        {inviteCardCollapsed ? (
+                                            <ChevronDown className="w-4 h-4 text-slate-400" />
+                                        ) : (
+                                            <ChevronUp className="w-4 h-4 text-slate-400" />
+                                        )}
+                                    </button>
+
+                                    {/* Collapsible Content */}
+                                    {!inviteCardCollapsed && (
+                                        <div className="px-4 pb-4 space-y-3 border-t border-slate-800/50">
+                                            {/* QR Code */}
+                                            <div className="pt-3 flex flex-col items-center">
+                                                <div className="bg-white p-2 rounded-lg">
+                                                    <img
+                                                        src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=http://100.88.23.90:5180/"
+                                                        alt="QR Code"
+                                                        className="w-32 h-32"
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            {/* Connection Details */}
+                                            <div className="space-y-2 text-xs">
+                                                <div>
+                                                    <span className="text-slate-500">Backend URL:</span>
+                                                    <p className="font-mono text-slate-300 mt-0.5">{API_BASE}</p>
+                                                </div>
+                                                <div>
+                                                    <span className="text-slate-500">Remote URL:</span>
+                                                    <p className="font-mono text-slate-300 mt-0.5">http://100.88.23.90:5180/</p>
+                                                </div>
+                                                <div>
+                                                    <span className="text-slate-500">Tailnet:</span>
+                                                    <p className="font-mono text-slate-300 mt-0.5">tail6c95b.ts.net</p>
+                                                </div>
+                                                <div>
+                                                    <span className="text-slate-500">Admin Contact:</span>
+                                                    <p className="font-mono text-slate-300 mt-0.5">thelocal1980@gmail.com</p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
 
                                 {/* Bulletin Board */}
@@ -1141,22 +1358,7 @@ Error: ${err.message || err}`,
                                 <div className="rounded-xl border border-slate-800/70 bg-slate-950/60 p-4">
                                     <h3 className="text-sm font-semibold mb-3">Tailscale Devices</h3>
                                     <button
-                                        onClick={async () => {
-                                            setTailnetLoading(true);
-                                            setTailnetError(null);
-                                            try {
-                                                const res = await fetch(`${API_BASE}/api/system/tailscale/summary`);
-                                                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                                                const data = await res.json();
-                                                setTailnetStats(data);
-                                                setTailnetHealthy(true);
-                                            } catch (err) {
-                                                setTailnetError(err.message);
-                                                setTailnetHealthy(false);
-                                            } finally {
-                                                setTailnetLoading(false);
-                                            }
-                                        }}
+                                        onClick={refreshTailnetStats}
                                         className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-slate-900/80 border border-slate-700 text-slate-300 text-sm hover:bg-slate-800/70"
                                     >
                                         <RefreshCw className={`w-4 h-4 ${tailnetLoading ? 'animate-spin' : ''}`} />
@@ -1276,6 +1478,73 @@ Error: ${err.message || err}`,
                                             </span>
                                         </div>
                                     </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {activeView === 'profile' && (
+                        <div className="lg:hidden rounded-2xl border border-slate-800/70 bg-slate-950/95 p-4 shadow-[0_18px_45px_rgba(0,0,0,0.75)] overflow-y-auto h-full">
+                            <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                                <UserCircle className="w-5 h-5" />
+                                Profile
+                            </h2>
+
+                            <div className="space-y-4">
+                                {/* User Info */}
+                                <div className="rounded-xl border border-slate-800/70 bg-slate-950/60 p-4">
+                                    <h3 className="text-sm font-semibold mb-3">User Info</h3>
+                                    <div className="space-y-3">
+                                        <div>
+                                            <label className="block text-xs text-slate-500 mb-1">Name</label>
+                                            <div className="px-3 py-2 bg-slate-900/60 border border-slate-800 rounded-lg text-sm text-slate-300">
+                                                Chance
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs text-slate-500 mb-1">Handle</label>
+                                            <div className="px-3 py-2 bg-slate-900/60 border border-slate-800 rounded-lg text-sm text-slate-300 font-mono">
+                                                @chance
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Chat Text Size */}
+                                <div className="rounded-xl border border-slate-800/70 bg-slate-950/60 p-4">
+                                    <h3 className="text-sm font-semibold mb-3">Chat Text Size</h3>
+                                    <div className="flex gap-2">
+                                        <button
+                                            onClick={() => setChatSize("small")}
+                                            className={`flex-1 px-4 py-3 rounded-lg text-sm font-semibold transition-all ${chatSize === "small"
+                                                ? "bg-gradient-to-r from-purple-600 to-blue-600 text-white shadow-lg"
+                                                : "bg-slate-900/80 border border-slate-700 text-slate-400 hover:bg-slate-800"
+                                                }`}
+                                        >
+                                            Small
+                                        </button>
+                                        <button
+                                            onClick={() => setChatSize("medium")}
+                                            className={`flex-1 px-4 py-3 rounded-lg text-sm font-semibold transition-all ${chatSize === "medium"
+                                                ? "bg-gradient-to-r from-purple-600 to-blue-600 text-white shadow-lg"
+                                                : "bg-slate-900/80 border border-slate-700 text-slate-400 hover:bg-slate-800"
+                                                }`}
+                                        >
+                                            Medium
+                                        </button>
+                                        <button
+                                            onClick={() => setChatSize("large")}
+                                            className={`flex-1 px-4 py-3 rounded-lg text-sm font-semibold transition-all ${chatSize === "large"
+                                                ? "bg-gradient-to-r from-purple-600 to-blue-600 text-white shadow-lg"
+                                                : "bg-slate-900/80 border border-slate-700 text-slate-400 hover:bg-slate-800"
+                                                }`}
+                                        >
+                                            Large
+                                        </button>
+                                    </div>
+                                    <p className="text-xs text-slate-500 mt-2">
+                                        {/* TODO: Add avatar, color theme, notification preferences */}
+                                    </p>
                                 </div>
                             </div>
                         </div>
@@ -1419,14 +1688,14 @@ Error: ${err.message || err}`,
                                                                     <div className="text-xs text-slate-400">
                                                                         Model
                                                                     </div>
-                                                                    <button
-                                                                        type="button"
-                                                                        onClick={fetchOllamaModels}
-                                                                        disabled={ollamaModelsLoading}
-                                                                        className="text-[10px] px-2 py-0.5 rounded-md border border-slate-700/80 text-slate-300 hover:border-sky-400/70 hover:text-sky-200 transition-colors disabled:opacity-50"
-                                                                    >
-                                                                        {ollamaModelsLoading ? "Loading..." : "Refresh"}
-                                                                    </button>
+                                        <button
+                                            type="button"
+                                            onClick={refreshOllamaModels}
+                                            disabled={ollamaModelsLoading}
+                                            className="text-[10px] px-2 py-0.5 rounded-md border border-slate-700/80 text-slate-300 hover:border-sky-400/70 hover:text-sky-200 transition-colors disabled:opacity-50"
+                                        >
+                                            {ollamaModelsLoading ? "Loading..." : "Refresh"}
+                                        </button>
                                                                 </div>
                                                                 {ollamaModels.length > 0 ? (
                                                                     <div className="relative">
@@ -1493,14 +1762,14 @@ Error: ${err.message || err}`,
                                             <div className="p-3 rounded-2xl bg-slate-900/70 border border-slate-800 space-y-3 text-xs">
                                                 <div className="flex items-center justify-between">
                                                     <span className="text-xs font-semibold text-slate-200">TailNet Status</span>
-                                                    <span className="flex items-center gap-1 text-[11px] text-emerald-400">
-                                                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                                                        {tailnetHealthy === false
-                                                            ? "issues"
-                                                            : tailnetHealthy === true
-                                                                ? "healthy"
-                                                                : "idle"}
-                                                    </span>
+                                                <span className="flex items-center gap-1 text-[11px] text-emerald-400">
+                                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                                                    {tailnetStatus === "offline"
+                                                        ? "issues"
+                                                        : tailnetStatus === "online"
+                                                            ? "healthy"
+                                                            : "idle"}
+                                                </span>
                                                 </div>
                                                 <p className="text-[11px] text-slate-400">
                                                     This pane will eventually surface live TailScale node health, latency, and reachability.

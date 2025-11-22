@@ -23,8 +23,17 @@ const nowTime = () =>
         minute: "2-digit",
     });
 
-const API_BASE =
-    import.meta.env.VITE_API_BASE_URL || `http://${window.location.hostname}:8000`;
+// Auto-detect API base URL - use same host as frontend for remote access
+const getApiBase = () => {
+    const hostname = window.location.hostname;
+    // If accessed via Tailscale IP or hostname, use that for backend too
+    if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
+        return `http://${hostname}:8000`;
+    }
+    return "http://localhost:8000";
+};
+
+const API_BASE = getApiBase();
 
 // Generate consistent color for each user
 const getUserColor = (userName) => {
@@ -55,6 +64,12 @@ const ChatOpsConsole = () => {
     const [lastMessageId, setLastMessageId] = useState(null);
     const [isLoadingMessages, setIsLoadingMessages] = useState(false);
 
+    // Ref for auto-scroll to bottom
+    const messagesEndRef = React.useRef(null);
+    const scrollToBottom = () => {
+        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    };
+
     const [messages, setMessages] = useState([
         {
             role: "assistant",
@@ -81,7 +96,7 @@ const ChatOpsConsole = () => {
         return localStorage.getItem("chatops_ollama_url") || "http://localhost:11434";
     });
     const [ollamaModel, setOllamaModel] = useState(() => {
-        return localStorage.getItem("chatops_ollama_model") || "llama3";
+        return localStorage.getItem("chatops_ollama_model") || "glm4:latest";
     });
     const [temp, setTemp] = useState(() => {
         const saved = localStorage.getItem("chatops_temperature");
@@ -97,6 +112,7 @@ const ChatOpsConsole = () => {
 
     const [bugReports, setBugReports] = useState([]);
     const [bugStatus, setBugStatus] = useState(null);
+    const [bugLogCollapsed, setBugLogCollapsed] = useState(true);
 
     // Tailnet stats
     const [tailnetStats, setTailnetStats] = useState(null);
@@ -139,6 +155,11 @@ const ChatOpsConsole = () => {
         localStorage.setItem("chatops_temperature", temp.toString());
     }, [temp]);
 
+    // Auto-scroll to bottom when messages change
+    React.useEffect(() => {
+        scrollToBottom();
+    }, [messages]);
+
     // Load messages from backend when room changes
     React.useEffect(() => {
         let cancelled = false;
@@ -146,7 +167,7 @@ const ChatOpsConsole = () => {
         const loadMessages = async () => {
             setIsLoadingMessages(true);
             try {
-                const res = await fetch(`/chat/rooms/${currentRoom.id}/messages`);
+                const res = await fetch(`${API_BASE}/chat/rooms/${currentRoom.id}/messages`);
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const data = await res.json();
                 if (cancelled) return;
@@ -189,8 +210,8 @@ const ChatOpsConsole = () => {
         const pollInterval = setInterval(async () => {
             try {
                 const url = lastMessageId
-                    ? `/chat/rooms/${currentRoom.id}/messages?since_id=${lastMessageId}`
-                    : `/chat/rooms/${currentRoom.id}/messages`;
+                    ? `${API_BASE}/chat/rooms/${currentRoom.id}/messages?since_id=${lastMessageId}`
+                    : `${API_BASE}/chat/rooms/${currentRoom.id}/messages`;
 
                 const res = await fetch(url);
                 if (!res.ok) return;
@@ -250,7 +271,7 @@ const ChatOpsConsole = () => {
 
         try {
             // STEP 1: Save user message to backend group chat
-            const saveRes = await fetch(`/chat/rooms/${currentRoom.id}/messages`, {
+            const saveRes = await fetch(`${API_BASE}/chat/rooms/${currentRoom.id}/messages`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -319,7 +340,7 @@ const ChatOpsConsole = () => {
             setLastChatOk(true);
 
             // STEP 3: Save AI response to backend
-            await fetch(`/chat/rooms/${currentRoom.id}/messages`, {
+            await fetch(`${API_BASE}/chat/rooms/${currentRoom.id}/messages`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -457,132 +478,98 @@ Error: ${err.message || err}`,
     );
 
     return (
-        <div className="min-h-screen w-full bg-gradient-to-br from-slate-950 via-slate-950 to-slate-900 text-slate-50">
-            {/* Top bar */}
-            <header className="border-b border-slate-800/70 bg-slate-950/95 backdrop-blur-xl">
-                <div className="mx-auto max-w-6xl px-6 py-4 flex items-center justify-between gap-4">
-                    <div className="flex items-center gap-3">
-                        <div className="h-10 w-10 rounded-2xl bg-gradient-to-br from-violet-500 to-sky-500 flex items-center justify-center">
-                            <Shield className="w-5 h-5 text-white" />
+        <div className="flex flex-col h-screen w-full bg-gradient-to-br from-slate-950 via-slate-950 to-slate-900 text-slate-50 overflow-hidden">
+            {/* Compact Top bar */}
+            <header className="flex-none border-b border-slate-800/70 bg-slate-950/95 backdrop-blur-xl">
+                <div className="mx-auto max-w-6xl px-3 sm:px-4 py-2 flex items-center justify-between gap-2 sm:gap-3">
+                    <div className="flex items-center gap-2">
+                        <div className="h-7 w-7 rounded-lg bg-gradient-to-br from-violet-500 to-sky-500 flex items-center justify-center">
+                            <Shield className="w-3.5 h-3.5 text-white" />
                         </div>
                         <div>
-                            <div className="text-[11px] tracking-[0.16em] text-slate-400 uppercase">
-                                Design Lab • Chat Surface
-                            </div>
-                            <div className="text-xl font-semibold flex items-center gap-2">
-                                ChatOps Neon
-                                <span className="text-xs font-medium text-slate-400">
-                                    experimental console
-                                </span>
+                            <div className="text-xs sm:text-sm font-semibold">
+                                ChatOps
                             </div>
                         </div>
                     </div>
 
-                    <div className="flex items-center gap-3 text-xs">
-                        {/* Chat status chip */}
-                        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-900/80 border border-slate-700/70">
-                            <span className={`w-1.5 h-1.5 rounded-full ${lastChatOk === true ? 'bg-emerald-400 animate-pulse' :
-                                lastChatOk === false ? 'bg-amber-400' : 'bg-slate-500'
+                    <div className="flex items-center gap-1.5 sm:gap-2 text-xs">
+                        {/* Status indicators */}
+                        <div className="flex items-center gap-1 px-2 py-1 rounded-full bg-slate-900/80 border border-slate-700/70">
+                            <span className={`w-1.5 h-1.5 rounded-full ${provider === 'openai' && !openaiKey ? 'bg-amber-400' :
+                                provider === 'ollama' && ollamaModels.length === 0 ? 'bg-amber-400' :
+                                    lastChatOk === true ? 'bg-emerald-400' : 'bg-slate-500'
                                 }`} />
-                            <span className="text-slate-300">
-                                {lastChatOk === true ? 'chat healthy' :
-                                    lastChatOk === false ? 'chat issues' : 'chat idle'}
+                            <span className="hidden sm:inline text-slate-400 text-[10px]">
+                                {provider === 'openai' ? 'AI' : 'Ollama'}
                             </span>
                         </div>
-                        {/* AI provider chip */}
-                        <div className="hidden md:flex items-center gap-2 px-3 py-1 rounded-full bg-slate-900/80 border border-slate-700/70">
-                            <Cpu className="w-3.5 h-3.5 text-violet-400" />
-                            <span className="text-slate-400">{provider === 'openai' ? 'openai' : 'ollama'}</span>
-                        </div>
-                        {/* Tailnet status chip */}
-                        <div className="hidden md:flex items-center gap-2 px-3 py-1 rounded-full bg-slate-900/80 border border-slate-700/70">
-                            <Wifi className={`w-3.5 h-3.5 ${tailnetHealthy === true ? 'text-sky-400' :
-                                tailnetHealthy === false ? 'text-amber-400' : 'text-slate-500'
-                                }`} />
-                            <span className="text-slate-400">
-                                {tailnetHealthy === true ? 'tailnet live' :
-                                    tailnetHealthy === false ? 'tailnet issues' : 'tailnet idle'}
-                            </span>
+                        <div className="hidden md:flex items-center gap-1 px-2 py-1 rounded-full bg-slate-900/80 border border-slate-700/70">
+                            <Wifi className={`w-3 h-3 ${tailnetHealthy === true ? 'text-sky-400' : 'text-slate-500'}`} />
+                            <span className="text-slate-400 text-[10px]">Tailnet</span>
                         </div>
                     </div>
                 </div>
             </header>
 
-            {/* Main layout */}
-            <main className="mx-auto max-w-6xl px-4 md:px-6 pt-6 pb-8 grid grid-cols-1 lg:grid-cols-[minmax(0,2.1fr)_minmax(0,1fr)] gap-6">
-                {/* Chat column */}
-                <section className="rounded-3xl border border-slate-800/70 bg-gradient-to-b from-slate-950/90 to-slate-950/95 shadow-[0_18px_45px_rgba(0,0,0,0.75)] flex flex-col overflow-hidden">
-                    {/* Chat header */}
-                    <div className="px-4 sm:px-6 py-3 border-b border-slate-800/70">
-                        <div className="flex items-center justify-between gap-3 mb-2">
-                            <div>
-                                <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">
-                                    AI Assistant
-                                </div>
-                                <div className="flex items-center gap-3">
-                                    <h2 className="text-base sm:text-lg font-semibold">
-                                        Ops Chat Console
-                                    </h2>
-                                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border border-slate-700/80 bg-slate-900/80 text-[11px] text-slate-300">
-                                        <span
-                                            className={`w-1.5 h-1.5 rounded-full ${lastChatOk === true
-                                                ? "bg-emerald-400 animate-pulse"
-                                                : lastChatOk === false
-                                                    ? "bg-amber-400"
-                                                    : "bg-slate-500"
-                                                }`}
-                                        />
-                                        <span>
-                                            {lastChatOk === true
-                                                ? "chat healthy"
-                                                : lastChatOk === false
-                                                    ? "chat issues"
-                                                    : "chat idle"}
-                                        </span>
+            {/* Global warning banner for API key issues - sits below header */}
+            {(() => {
+                const noOpenAI = provider === 'openai' && !openaiKey;
+                const noOllama = provider === 'ollama' && ollamaModels.length === 0;
+                if (noOpenAI || noOllama) {
+                    return (
+                        <div className="flex-none px-3 sm:px-4 py-2 text-xs bg-amber-900/40 border-b border-amber-600/40 flex items-start gap-2">
+                            <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-amber-500/20 border border-amber-400 text-amber-300 text-[10px] font-bold mt-0.5">!</span>
+                            <div className="flex-1 leading-relaxed">
+                                {noOpenAI && (
+                                    <span>
+                                        <span className="font-semibold text-amber-200">OpenAI key missing.</span> Enter an API key in Provider tab or switch to Ollama.
                                     </span>
-                                </div>
+                                )}
+                                {noOllama && (
+                                    <span>
+                                        <span className="font-semibold text-amber-200">No Ollama models.</span> Start Ollama then click Refresh Models in Settings.
+                                    </span>
+                                )}
                             </div>
                         </div>
+                    );
+                }
+                return null;
+            })()}
+
+            {/* Main layout - flex for full height */}
+            <main className="flex-1 mx-auto max-w-6xl w-full px-3 sm:px-4 md:px-6 py-3 sm:py-4 grid grid-cols-1 lg:grid-cols-[minmax(0,2.1fr)_minmax(0,1fr)] gap-3 sm:gap-4 overflow-hidden">
+                {/* Chat column - flex container fills available height */}
+                <section className="rounded-2xl sm:rounded-3xl border border-slate-800/70 bg-gradient-to-b from-slate-950/90 to-slate-950/95 shadow-[0_18px_45px_rgba(0,0,0,0.75)] flex flex-col overflow-hidden h-full">
+                    {/* Simplified Chat header */}
+                    <div className="flex-none px-3 sm:px-4 py-2 border-b border-slate-800/70 bg-slate-950/60">
                         {currentRoom && (() => {
                             const uniqueUsers = [...new Set(messages.filter(m => m.user_name).map(m => m.user_name))];
                             if (uniqueUsers.length > 0) {
                                 return (
-                                    <div className="flex items-center gap-2 flex-wrap">
-                                        <span className="text-[10px] uppercase tracking-wider text-slate-500">Active:</span>
-                                        {uniqueUsers.map(userName => {
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                        <span className="text-[9px] uppercase tracking-wider text-slate-500">Active:</span>
+                                        {uniqueUsers.slice(0, 4).map(userName => {
                                             const color = getUserColor(userName);
                                             return (
                                                 <span
                                                     key={userName}
-                                                    className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-gradient-to-r ${color} text-white text-[10px] font-medium shadow-md`}
+                                                    className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-gradient-to-r ${color} text-white text-[9px] font-medium shadow-sm`}
                                                 >
-                                                    <span className="w-1 h-1 rounded-full bg-white/80 animate-pulse" />
+                                                    <span className="w-1 h-1 rounded-full bg-white/80" />
                                                     {userName}
                                                 </span>
                                             );
                                         })}
+                                        {uniqueUsers.length > 4 && (
+                                            <span className="text-[9px] text-slate-500">+{uniqueUsers.length - 4}</span>
+                                        )}
                                     </div>
                                 );
                             }
-                            return null;
+                            return <div className="text-[10px] text-slate-500">{currentRoom.name} • Team chat</div>;
                         })()}
-                    </div>
-
-                    {/* Mode selector */}
-                    <div className="px-4 py-2 border-b border-slate-800/50 flex items-center gap-2">
-                        <span className="text-[11px] uppercase tracking-wider text-slate-500 mr-1">Mode:</span>
-                        {['default', 'ops', 'play'].map((m) => (
-                            <button
-                                key={m}
-                                onClick={() => setMode(m)}
-                                className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${mode === m
-                                    ? 'bg-violet-500/20 text-violet-300 border border-violet-500/50'
-                                    : 'bg-slate-900/50 text-slate-400 border border-slate-700/50 hover:border-slate-600/70'
-                                    }`}
-                            >
-                                {m}
-                            </button>
-                        ))}
                     </div>
 
                     {/* Messages */}
@@ -632,32 +619,36 @@ Error: ${err.message || err}`,
                                 </div>
                             </div>
                         )}
+                        {/* Scroll anchor */}
+                        <div ref={messagesEndRef} />
                     </div>
 
-                    {/* Input bar */}
-                    <div className="border-t border-slate-800/80 bg-slate-950/95 px-3 sm:px-4 py-3">
-                        <div className="flex gap-2 max-w-screen-lg mx-auto items-end">
+                    {/* Input bar - Sticky at bottom of chat container */}
+                    <div className="flex-none border-t border-slate-800/80 bg-slate-950/98 px-3 sm:px-4 py-2.5 sm:py-3">
+                        <div className="flex gap-2 items-end">
                             <textarea
                                 ref={inputRef}
-                                rows={3}
+                                rows={2}
                                 value={inputMessage}
                                 onChange={(e) => setInputMessage(e.target.value)}
                                 onKeyDown={handleComposerKeyDown}
-                                placeholder="Ask something about the hub, secrets, TailNet, or Lazlo…"
-                                className="flex-1 px-4 py-3 bg-slate-800/60 border border-slate-700/60 rounded-2xl text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500/30 focus:border-purple-500 resize-none min-h-[56px] max-h-[120px]"
+                                placeholder="Ask about the hub, secrets, or TailNet…"
+                                className="flex-1 px-3 py-2 bg-slate-800/60 border border-slate-700/60 rounded-xl text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500/30 focus:border-purple-500 resize-none min-h-[48px] max-h-[100px]"
+                                style={{ WebkitUserSelect: 'text' }}
                             />
-                            <div className="flex flex-col gap-2">
+                            <div className="flex flex-col gap-1.5">
                                 <button
                                     onClick={handleSendMessage}
-                                    className="flex items-center justify-center px-3 py-2 rounded-2xl bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 active:scale-95 shadow-lg shadow-purple-900/40 transition-all"
+                                    className="flex items-center justify-center px-3 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 active:scale-95 shadow-lg shadow-purple-900/40 transition-all"
+                                    disabled={isThinking}
                                 >
                                     <Send className="w-4 h-4" />
                                 </button>
                                 <button
                                     onClick={handleLogBug}
-                                    className="px-3 py-2 rounded-2xl bg-slate-900/80 border border-amber-500/60 text-[11px] font-semibold text-amber-200 hover:bg-amber-500/10 active:scale-95"
+                                    className="px-2 py-1.5 rounded-lg bg-slate-900/80 border border-amber-500/60 text-[10px] font-semibold text-amber-200 hover:bg-amber-500/10 active:scale-95"
                                 >
-                                    Log bug
+                                    Log
                                 </button>
                             </div>
                         </div>

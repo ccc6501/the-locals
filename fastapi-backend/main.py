@@ -130,13 +130,5 @@ def health_check():
 
 
 if __name__ == "__main__":
-    import hypercorn.asyncio
-    import asyncio
-    from hypercorn.config import Config
-    
-    config = Config()
-    config.bind = ["0.0.0.0:8000"]  # Listen on all interfaces for remote access
-    config.accesslog = "-"
-    config.errorlog = "-"
-    
-    asyncio.run(hypercorn.asyncio.serve(app, config))
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

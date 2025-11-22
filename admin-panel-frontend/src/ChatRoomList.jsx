@@ -2,6 +2,17 @@
 import React, { useEffect, useState } from "react";
 import { MessageSquare, Plus, Loader2 } from "lucide-react";
 
+// Auto-detect API base URL - use same host as frontend for remote access
+const getApiBase = () => {
+    const hostname = window.location.hostname;
+    if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
+        return `http://${hostname}:8000`;
+    }
+    return "http://localhost:8000";
+};
+
+const API_BASE = getApiBase();
+
 const ChatRoomList = ({ currentRoom, onSelectRoom }) => {
     const [rooms, setRooms] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -13,7 +24,7 @@ const ChatRoomList = ({ currentRoom, onSelectRoom }) => {
         const loadRooms = async () => {
             setIsLoading(true);
             try {
-                const res = await fetch("/chat/rooms");
+                const res = await fetch(`${API_BASE}/chat/rooms`);
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const data = await res.json();
                 if (cancelled) return;

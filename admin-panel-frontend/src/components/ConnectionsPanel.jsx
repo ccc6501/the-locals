@@ -44,7 +44,7 @@ export function ConnectionsPanel({
                 <span className={`ml-auto text-xs font-semibold px-2 py-0.5 rounded bg-slate-800 border border-slate-700 ${providerMeta?.color || 'text-slate-300'}`}>{providerMeta?.label}</span>
             </div>
 
-                    {/* Provider Toggle */}
+            {/* Provider Toggle */}
             <div>
                 <span className="block text-slate-500 mb-2 text-xs">Provider</span>
                 <div className="inline-flex rounded-lg overflow-hidden border border-slate-700 bg-slate-900/60">
@@ -59,7 +59,7 @@ export function ConnectionsPanel({
                 </div>
             </div>
 
-                    {/* Dynamic Provider Config */}
+            {/* Dynamic Provider Config */}
             {provider === 'openai' ? (
                 <div className="space-y-3">
                     <div>
@@ -75,32 +75,32 @@ export function ConnectionsPanel({
                             />
                         </div>
                     </div>
-                                <div>
-                                    <label className="block text-slate-500 mb-1 text-xs">Model</label>
-                                    <select
-                                        value={openaiModel}
-                                        onChange={e => setOpenaiModel(e.target.value)}
-                                        className="w-full bg-slate-900/80 border border-slate-700 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-violet-500/70"
-                                    >
-                                        {/* Curated list */}
-                                        <option value="gpt-4o">gpt-4o</option>
-                                        <option value="gpt-4.1">gpt-4.1</option>
-                                        <option value="gpt-4.1-mini">gpt-4.1-mini</option>
-                                        <option value="o3-mini">o3-mini</option>
-                                        <option value="o4-mini">o4-mini</option>
-                                        <option value="text-embedding-3-large">text-embedding-3-large</option>
-                                        <option value="text-embedding-3-small">text-embedding-3-small</option>
-                                        <option value="CUSTOM">Custom…</option>
-                                    </select>
-                                    {openaiModel === 'CUSTOM' && (
-                                        <input
-                                            type="text"
-                                            placeholder="Enter custom model id"
-                                            onChange={e => setOpenaiModel(e.target.value)}
-                                            className="mt-2 w-full bg-slate-900/80 border border-slate-700 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-violet-500/70"
-                                        />
-                                    )}
-                                </div>
+                    <div>
+                        <label className="block text-slate-500 mb-1 text-xs">Model</label>
+                        <select
+                            value={openaiModel}
+                            onChange={e => setOpenaiModel(e.target.value)}
+                            className="w-full bg-slate-900/80 border border-slate-700 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-violet-500/70"
+                        >
+                            {/* Curated list */}
+                            <option value="gpt-4o">gpt-4o</option>
+                            <option value="gpt-4.1">gpt-4.1</option>
+                            <option value="gpt-4.1-mini">gpt-4.1-mini</option>
+                            <option value="o3-mini">o3-mini</option>
+                            <option value="o4-mini">o4-mini</option>
+                            <option value="text-embedding-3-large">text-embedding-3-large</option>
+                            <option value="text-embedding-3-small">text-embedding-3-small</option>
+                            <option value="CUSTOM">Custom…</option>
+                        </select>
+                        {openaiModel === 'CUSTOM' && (
+                            <input
+                                type="text"
+                                placeholder="Enter custom model id"
+                                onChange={e => setOpenaiModel(e.target.value)}
+                                className="mt-2 w-full bg-slate-900/80 border border-slate-700 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-violet-500/70"
+                            />
+                        )}
+                    </div>
                 </div>
             ) : (
                 <div className="space-y-3">
@@ -113,43 +113,43 @@ export function ConnectionsPanel({
                             className="w-full bg-slate-900/80 border border-slate-700 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-violet-500/70"
                         />
                     </div>
-                                <div>
-                                    <label className="block text-slate-500 mb-1 text-xs">Model</label>
-                                    {ollamaModels.length > 0 ? (
-                                        <select
-                                            value={ollamaModel}
-                                            onChange={e => setOllamaModel(e.target.value)}
-                                            className="w-full bg-slate-900/80 border border-slate-700 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-violet-500/70"
-                                        >
-                                            {ollamaModels.map(m => <option key={m} value={m}>{m}</option>)}
-                                            <option value="CUSTOM">Custom…</option>
-                                        </select>
-                                    ) : (
-                                        <input
-                                            type="text"
-                                            value={ollamaModel}
-                                            onChange={e => setOllamaModel(e.target.value)}
-                                            placeholder="llama3"
-                                            className="w-full bg-slate-900/80 border border-slate-700 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-violet-500/70"
-                                        />
-                                    )}
-                                    {ollamaModel === 'CUSTOM' && (
-                                        <input
-                                            type="text"
-                                            placeholder="Enter custom model"
-                                            onChange={e => setOllamaModel(e.target.value)}
-                                            className="mt-2 w-full bg-slate-900/80 border border-slate-700 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-violet-500/70"
-                                        />
-                                    )}
-                                    <button
-                                        onClick={refreshOllamaModels}
-                                        className="mt-3 w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-slate-800/70 border border-slate-700 text-slate-200 text-xs hover:bg-slate-700/70"
-                                        disabled={ollamaModelsLoading}
-                                    >
-                                        <RefreshCw className={`w-3.5 h-3.5 ${ollamaModelsLoading ? 'animate-spin' : ''}`} />
-                                        {ollamaModelsLoading ? 'Loading Models...' : 'Refresh Models'}
-                                    </button>
-                                </div>
+                    <div>
+                        <label className="block text-slate-500 mb-1 text-xs">Model</label>
+                        {ollamaModels.length > 0 ? (
+                            <select
+                                value={ollamaModel}
+                                onChange={e => setOllamaModel(e.target.value)}
+                                className="w-full bg-slate-900/80 border border-slate-700 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-violet-500/70"
+                            >
+                                {ollamaModels.map(m => <option key={m} value={m}>{m}</option>)}
+                                <option value="CUSTOM">Custom…</option>
+                            </select>
+                        ) : (
+                            <input
+                                type="text"
+                                value={ollamaModel}
+                                onChange={e => setOllamaModel(e.target.value)}
+                                placeholder="llama3"
+                                className="w-full bg-slate-900/80 border border-slate-700 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-violet-500/70"
+                            />
+                        )}
+                        {ollamaModel === 'CUSTOM' && (
+                            <input
+                                type="text"
+                                placeholder="Enter custom model"
+                                onChange={e => setOllamaModel(e.target.value)}
+                                className="mt-2 w-full bg-slate-900/80 border border-slate-700 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-violet-500/70"
+                            />
+                        )}
+                        <button
+                            onClick={refreshOllamaModels}
+                            className="mt-3 w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-slate-800/70 border border-slate-700 text-slate-200 text-xs hover:bg-slate-700/70"
+                            disabled={ollamaModelsLoading}
+                        >
+                            <RefreshCw className={`w-3.5 h-3.5 ${ollamaModelsLoading ? 'animate-spin' : ''}`} />
+                            {ollamaModelsLoading ? 'Loading Models...' : 'Refresh Models'}
+                        </button>
+                    </div>
                 </div>
             )}
 
@@ -167,68 +167,68 @@ export function ConnectionsPanel({
                 />
             </div>
 
-                    {/* Cloud Storage */}
-                    <div className="pt-2 border-t border-slate-800">
-                        <div className="flex items-center gap-2 mb-2">
-                            <Cloud className="w-4 h-4 text-slate-500" />
-                            <span className="text-xs font-semibold text-slate-300">Cloud Storage</span>
-                        </div>
-                        <label className="block text-slate-500 mb-1 text-[11px]">Path / Mount</label>
-                        <input
-                            type="text"
-                            value={cloudPath}
-                            onChange={e => setCloudPath(e.target.value)}
-                            placeholder="/mnt/data"
-                            className="w-full bg-slate-900/80 border border-slate-700 rounded-lg px-3 py-2 text-[11px] focus:outline-none focus:border-violet-500/70 mb-3"
-                        />
-                        <label className="block text-slate-500 mb-1 text-[11px]">Endpoint / Base URL</label>
-                        <input
-                            type="text"
-                            value={cloudEndpoint}
-                            onChange={e => setCloudEndpoint(e.target.value)}
-                            placeholder="http://nas.local:9000"
-                            className="w-full bg-slate-900/80 border border-slate-700 rounded-lg px-3 py-2 text-[11px] focus:outline-none focus:border-violet-500/70"
-                        />
-                    </div>
+            {/* Cloud Storage */}
+            <div className="pt-2 border-t border-slate-800">
+                <div className="flex items-center gap-2 mb-2">
+                    <Cloud className="w-4 h-4 text-slate-500" />
+                    <span className="text-xs font-semibold text-slate-300">Cloud Storage</span>
+                </div>
+                <label className="block text-slate-500 mb-1 text-[11px]">Path / Mount</label>
+                <input
+                    type="text"
+                    value={cloudPath}
+                    onChange={e => setCloudPath(e.target.value)}
+                    placeholder="/mnt/data"
+                    className="w-full bg-slate-900/80 border border-slate-700 rounded-lg px-3 py-2 text-[11px] focus:outline-none focus:border-violet-500/70 mb-3"
+                />
+                <label className="block text-slate-500 mb-1 text-[11px]">Endpoint / Base URL</label>
+                <input
+                    type="text"
+                    value={cloudEndpoint}
+                    onChange={e => setCloudEndpoint(e.target.value)}
+                    placeholder="http://nas.local:9000"
+                    className="w-full bg-slate-900/80 border border-slate-700 rounded-lg px-3 py-2 text-[11px] focus:outline-none focus:border-violet-500/70"
+                />
+            </div>
 
-                    {/* Tailnet */}
-                    <div className="pt-4 border-t border-slate-800">
-                        <div className="flex items-center gap-2 mb-2">
-                            <Wifi className="w-4 h-4 text-slate-500" />
-                            <span className="text-xs font-semibold text-slate-300">Tailnet</span>
-                            <span className={`ml-auto text-[10px] px-2 py-0.5 rounded-full border ${tailnetStats?.status === 'connected' ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-300' : 'bg-slate-800 border-slate-700 text-slate-400'}`}>{tailnetStats?.status || 'unknown'}</span>
-                        </div>
-                        <div className="grid grid-cols-2 gap-2 text-[10px] mb-2">
-                            <div className="p-2 rounded-lg bg-slate-900/70 border border-slate-800">
-                                <div className="text-slate-500">Devices Online</div>
-                                <div className="text-slate-300 font-semibold">{tailnetStats?.devices_online ?? '--'}</div>
-                            </div>
-                            <div className="p-2 rounded-lg bg-slate-900/70 border border-slate-800">
-                                <div className="text-slate-500">Total Devices</div>
-                                <div className="text-slate-300 font-semibold">{tailnetStats?.devices_total ?? '--'}</div>
-                            </div>
-                            <div className="p-2 rounded-lg bg-slate-900/70 border border-slate-800">
-                                <div className="text-slate-500">Exit Node</div>
-                                <div className="text-slate-300 font-semibold truncate">{tailnetStats?.exit_node ?? 'none'}</div>
-                            </div>
-                            <div className="p-2 rounded-lg bg-slate-900/70 border border-slate-800">
-                                <div className="text-slate-500">Last Check</div>
-                                <div className="text-slate-300 font-semibold truncate">{tailnetStats?.last_check ?? '--'}</div>
-                            </div>
-                        </div>
-                        {tailnetError && <div className="text-[10px] text-amber-400 mb-2">{tailnetError}</div>}
-                        <button
-                            type="button"
-                            onClick={refreshTailnetStats}
-                            disabled={tailnetLoading}
-                            className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-slate-800/70 border border-slate-700 text-slate-200 text-xs hover:bg-slate-700/70 disabled:opacity-50"
-                        >
-                            <RefreshCw className={`w-3.5 h-3.5 ${tailnetLoading ? 'animate-spin' : ''}`} />
-                            {tailnetLoading ? 'Refreshing…' : 'Refresh Tailnet'}
-                        </button>
+            {/* Tailnet */}
+            <div className="pt-4 border-t border-slate-800">
+                <div className="flex items-center gap-2 mb-2">
+                    <Wifi className="w-4 h-4 text-slate-500" />
+                    <span className="text-xs font-semibold text-slate-300">Tailnet</span>
+                    <span className={`ml-auto text-[10px] px-2 py-0.5 rounded-full border ${tailnetStats?.status === 'connected' ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-300' : 'bg-slate-800 border-slate-700 text-slate-400'}`}>{tailnetStats?.status || 'unknown'}</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-[10px] mb-2">
+                    <div className="p-2 rounded-lg bg-slate-900/70 border border-slate-800">
+                        <div className="text-slate-500">Devices Online</div>
+                        <div className="text-slate-300 font-semibold">{tailnetStats?.devices_online ?? '--'}</div>
                     </div>
+                    <div className="p-2 rounded-lg bg-slate-900/70 border border-slate-800">
+                        <div className="text-slate-500">Total Devices</div>
+                        <div className="text-slate-300 font-semibold">{tailnetStats?.devices_total ?? '--'}</div>
+                    </div>
+                    <div className="p-2 rounded-lg bg-slate-900/70 border border-slate-800">
+                        <div className="text-slate-500">Exit Node</div>
+                        <div className="text-slate-300 font-semibold truncate">{tailnetStats?.exit_node ?? 'none'}</div>
+                    </div>
+                    <div className="p-2 rounded-lg bg-slate-900/70 border border-slate-800">
+                        <div className="text-slate-500">Last Check</div>
+                        <div className="text-slate-300 font-semibold truncate">{tailnetStats?.last_check ?? '--'}</div>
+                    </div>
+                </div>
+                {tailnetError && <div className="text-[10px] text-amber-400 mb-2">{tailnetError}</div>}
+                <button
+                    type="button"
+                    onClick={refreshTailnetStats}
+                    disabled={tailnetLoading}
+                    className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-slate-800/70 border border-slate-700 text-slate-200 text-xs hover:bg-slate-700/70 disabled:opacity-50"
+                >
+                    <RefreshCw className={`w-3.5 h-3.5 ${tailnetLoading ? 'animate-spin' : ''}`} />
+                    {tailnetLoading ? 'Refreshing…' : 'Refresh Tailnet'}
+                </button>
+            </div>
 
-                    {/* Summary footer */}
+            {/* Summary footer */}
             <div className="text-[11px] text-slate-400 border-t border-slate-800 pt-4 flex flex-wrap items-center gap-2">
                 <span className="font-semibold text-slate-300">Active:</span>
                 <span className="px-2 py-0.5 rounded-md bg-slate-800/70 border border-slate-700 text-slate-300 text-[10px] font-mono">
@@ -237,13 +237,13 @@ export function ConnectionsPanel({
                 {provider === 'openai' && (
                     <span className={`px-2 py-0.5 rounded-md text-[10px] font-semibold ${openaiKey ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-600/30' : 'bg-amber-500/20 text-amber-300 border border-amber-600/30'}`}>{openaiKey ? 'Key Set' : 'Key Missing'}</span>
                 )}
-                        {provider === 'ollama' && (
-                            <span className={`px-2 py-0.5 rounded-md text-[10px] font-semibold ${ollamaModels.length ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-600/30' : 'bg-slate-700/40 text-slate-400 border border-slate-700/60'}`}>{ollamaModels.length ? `${ollamaModels.length} models` : 'No models'}</span>
-                        )}
-                        <span className="px-2 py-0.5 rounded-md bg-slate-800/70 border border-slate-700 text-slate-300 text-[10px] font-mono ml-auto flex items-center gap-1">
-                            <Database className="w-3 h-3 text-slate-500" />
-                            {cloudPath || '/mnt/data'}
-                        </span>
+                {provider === 'ollama' && (
+                    <span className={`px-2 py-0.5 rounded-md text-[10px] font-semibold ${ollamaModels.length ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-600/30' : 'bg-slate-700/40 text-slate-400 border border-slate-700/60'}`}>{ollamaModels.length ? `${ollamaModels.length} models` : 'No models'}</span>
+                )}
+                <span className="px-2 py-0.5 rounded-md bg-slate-800/70 border border-slate-700 text-slate-300 text-[10px] font-mono ml-auto flex items-center gap-1">
+                    <Database className="w-3 h-3 text-slate-500" />
+                    {cloudPath || '/mnt/data'}
+                </span>
             </div>
         </div>
     );

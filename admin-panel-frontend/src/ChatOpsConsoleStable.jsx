@@ -155,7 +155,7 @@ const ChatOpsConsoleStable = () => {
             }
             if (!contentType.includes('application/json')) {
                 const text = await res.text();
-                throw new Error(`Unexpected non-JSON response (${contentType || 'unknown'}): ${text.slice(0,120)}...`);
+                throw new Error(`Unexpected non-JSON response (${contentType || 'unknown'}): ${text.slice(0, 120)}...`);
             }
             const data = await res.json();
             setTailnetStats({ ...data, last_check: new Date().toLocaleTimeString() });

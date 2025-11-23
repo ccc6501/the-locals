@@ -27,12 +27,42 @@ import {
 } from 'lucide-react';
 
 // Helpers
-const getApiBase = () => {
+// Dynamic API base selection with port probing; caches working base in localStorage.
+const pickApiBase = async () => {
+    // Allow manual override
+    const override = localStorage.getItem('theLocal.apiBaseOverride');
+    if (override) return override;
+    const cached = localStorage.getItem('theLocal.apiBaseCached');
+    if (cached) return cached;
     const hostname = window.location.hostname;
-    if (hostname !== 'localhost' && hostname !== '127.0.0.1') return `http://${hostname}:8000`;
-    return 'http://localhost:8000';
+    const candidates = [];
+    // Port candidates align with tray BACKEND_PORTS fallback
+    const portList = (localStorage.getItem('theLocal.portCandidates') || '8000,8001,8002')
+        .split(',').map(p => p.trim()).filter(Boolean);
+    for (const p of portList) {
+        if (hostname === 'localhost' || hostname === '127.0.0.1') {
+            candidates.push(`http://localhost:${p}`);
+        } else {
+            candidates.push(`http://${hostname}:${p}`);
+        }
+    }
+    // Probe system summary endpoint for first responsive base
+    for (const base of candidates) {
+        try {
+            const controller = new AbortController();
+            const t = setTimeout(() => controller.abort(), 2500);
+            const res = await fetch(`${base}/api/system/public/summary`, { signal: controller.signal });
+            clearTimeout(t);
+            if (res.ok) {
+                localStorage.setItem('theLocal.apiBaseCached', base);
+                return base;
+            }
+        } catch { /* try next */ }
+    }
+    // Fallback default
+    return candidates[0] || 'http://localhost:8000';
 };
-const API_BASE = getApiBase();
+let API_BASE = 'http://localhost:8000'; // will be updated asynchronously
 
 const getUserColor = (userName) => {
     if (!userName) return 'from-violet-500 to-sky-500';
@@ -134,8 +164,18 @@ const ChatOpsConsoleStable = () => {
     // Scroll
     useEffect(() => { const c = messagesContainerRef.current; if (c) c.scrollTop = c.scrollHeight; }, [messages]);
 
-    // Initial status boot (models + tailnet fetch)
-    useEffect(() => { refreshOllamaModels(); refreshTailnetStats(); refreshSystemSummary(); refreshUserCount(); refreshLogs(); }, []);
+    // Resolve API base dynamically on mount then trigger initial fetches
+    useEffect(() => {
+        (async () => {
+            API_BASE = await pickApiBase();
+            // Re-run initial data pulls after base resolved
+            refreshOllamaModels();
+            refreshTailnetStats();
+            refreshSystemSummary();
+            refreshUserCount();
+            refreshLogs();
+        })();
+    }, []);
     useEffect(() => {
         const interval = setInterval(() => { refreshTailnetStats(); refreshSystemSummary(); refreshUserCount(); refreshLogs(); }, 30000);
         return () => clearInterval(interval);
@@ -170,11 +210,11 @@ const ChatOpsConsoleStable = () => {
             const data = await res.json();
             // Normalize status values from backend
             const rawStatus = (data.status || '').toLowerCase();
-            const normalized = ['connected','online','ok'].includes(rawStatus)
-              ? 'online'
-              : ['disconnected','error','not_installed','timeout'].includes(rawStatus)
-                ? 'offline'
-                : 'pending';
+            const normalized = ['connected', 'online', 'ok'].includes(rawStatus)
+                ? 'online'
+                : ['disconnected', 'error', 'not_installed', 'timeout'].includes(rawStatus)
+                    ? 'offline'
+                    : 'pending';
             setTailnetStats({ ...data, last_check: new Date().toLocaleTimeString(), normalized_status: normalized });
             setTailnetStatus(normalized);
         } catch (err) {

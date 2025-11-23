@@ -37,6 +37,8 @@ Batch usage (same arguments pass through to PowerShell):
 start_all.bat -Ports "8000,8001" -LogMaxBytes 2097152
 ```
 
+If the backend falls back to an alternate port (e.g. 8001), the frontend now probes ports automatically (8000,8001,8002) via `pickApiBase` logic in `ChatOpsConsoleStable.jsx`. You can force a manual override by setting `localStorage.setItem('theLocal.apiBaseOverride', 'http://localhost:8001');` in the browser console.
+
 ## start_all.ps1 Usage
 
 ```powershell

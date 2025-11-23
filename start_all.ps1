@@ -61,19 +61,10 @@ function Start-Backend {
         if ($DryRun) { return }
         $backendLog = Join-Path $root 'backend.log'
         if ($Silent) {
-            $style = 'Hidden'
-            $noExit = '-NoExit'
-            $redir = " *>& '$backendLog'"
+            $python = (Get-Command python).Source
+            Start-Process -FilePath $python -ArgumentList "-m uvicorn main:app --host 0.0.0.0 --port 8000 --reload" -WorkingDirectory $backendPath -WindowStyle Hidden -RedirectStandardOutput $backendLog -RedirectStandardError $backendLog
         } else {
-            $style = 'Normal'
-            $noExit = '-NoExit'
-            $redir = ''
-        }
-        $cmd = "cd '$backendPath'; python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload$redir"
-        if ($Silent) {
-            Start-Process powershell -ArgumentList @('-Command', $cmd) -WindowStyle $style
-        } else {
-            Start-Process powershell -ArgumentList @('-NoExit','-Command', $cmd) -WindowStyle $style
+            Start-Process powershell -ArgumentList @('-NoExit','-Command', "cd '$backendPath'; python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload") -WindowStyle Normal
         }
     }
     else {
@@ -84,19 +75,13 @@ function Start-Backend {
         if ($DryRun) { return }
         $backendLog = Join-Path $root 'backend.log'
         if ($Silent) {
-            $style = 'Hidden'
-            $noExit = '-NoExit'
-            $redir = " *>& '$backendLog'"
+            $python = (Get-Command python).Source
+            # apply env overrides in current session before spawn
+            if ($Ports) { $env:BACKEND_PORTS = $Ports }
+            if ($LogMaxBytes -gt 0) { $env:TRAY_LOG_MAX_BYTES = $LogMaxBytes }
+            Start-Process -FilePath $python -ArgumentList "tray_runner.py" -WorkingDirectory $backendPath -WindowStyle Hidden -RedirectStandardOutput $backendLog -RedirectStandardError $backendLog
         } else {
-            $style = 'Normal'
-            $noExit = '-NoExit'
-            $redir = ''
-        }
-        $cmd = "cd '$backendPath'; $envCmd python tray_runner.py$redir"
-        if ($Silent) {
-            Start-Process powershell -ArgumentList @('-Command', $cmd) -WindowStyle $style
-        } else {
-            Start-Process powershell -ArgumentList @('-NoExit','-Command', $cmd) -WindowStyle $style
+            Start-Process powershell -ArgumentList @('-NoExit','-Command', "cd '$backendPath'; $envCmd python tray_runner.py") -WindowStyle Normal
         }
     }
 }
@@ -120,19 +105,10 @@ function Start-Frontend {
     if ($DryRun) { return }
     $frontendLog = Join-Path $root 'frontend.log'
     if ($Silent) {
-        $style = 'Hidden'
-        $noExit = '-NoExit'
-        $redir = " *>& '$frontendLog'"
+        $npm = (Get-Command npm).Source
+        Start-Process -FilePath $npm -ArgumentList "run dev" -WorkingDirectory $frontendPath -WindowStyle Hidden -RedirectStandardOutput $frontendLog -RedirectStandardError $frontendLog
     } else {
-        $style = 'Normal'
-        $noExit = '-NoExit'
-        $redir = ''
-    }
-    $cmd = "cd '$frontendPath'; npm run dev$redir"
-    if ($Silent) {
-        Start-Process powershell -ArgumentList @('-Command', $cmd) -WindowStyle $style
-    } else {
-        Start-Process powershell -ArgumentList @('-NoExit','-Command', $cmd) -WindowStyle $style
+        Start-Process powershell -ArgumentList @('-NoExit','-Command', "cd '$frontendPath'; npm run dev") -WindowStyle Normal
     }
 }
 

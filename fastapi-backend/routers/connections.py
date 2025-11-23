@@ -1,6 +1,6 @@
 """
 API Connections routes - Tailscale, OpenAI, Ollama
-"""
+"""  # pyright: ignore
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -16,6 +16,7 @@ from auth_utils import get_current_active_user, require_admin
 
 # AI imports
 import openai
+from openai import OpenAI
 import httpx
 
 load_dotenv()
@@ -252,21 +253,48 @@ async def test_openai(
         except Exception:
             pass
 
-        client = openai.OpenAI(api_key=api_key)
-        response = client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": "Say 'test successful' if you receive this."}],
-            max_tokens=10
-        )
-        
-        conn.status = "connected"
+        client = OpenAI(api_key=api_key)
+        fallbacks = [model, "gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo"]
+        tried = []
+        last_err = None
+        for m in fallbacks:
+            if m in tried:
+                continue
+            tried.append(m)
+            try:
+                response = client.chat.completions.create(
+                    model=m,
+                    messages=[{"role": "user", "content": "Say 'test successful' if you receive this."}],
+                    max_tokens=10
+                )
+                conn.status = "connected"
+                db.commit()
+                used_model = m if m == model else f"{m} (fallback)"
+                return {
+                    "status": "connected",
+                    "message": "OpenAI connection successful",
+                    "model": used_model,
+                    "response": response.choices[0].message.content
+                }
+            except Exception as e:
+                last_err = e
+                err_lower = str(e).lower()
+                if any(k in err_lower for k in ["incorrect api key", "invalid api key"]):
+                    conn.status = "error"
+                    db.commit()
+                    return {"status": "error", "message": f"API key rejected: {str(e)}"}
+                if any(k in err_lower for k in ["rate limit", "quota", "billing"]):
+                    conn.status = "error"
+                    db.commit()
+                    return {"status": "error", "message": f"Quota/billing issue: {str(e)}"}
+                # For model not found, continue to next fallback
+                if "model" in err_lower and "not" in err_lower and "found" in err_lower:
+                    continue
+                # Other errors: try next until exhausted
+                continue
+        conn.status = "error"
         db.commit()
-        
-        return {
-            "status": "connected",
-            "message": "OpenAI connection successful",
-            "response": response.choices[0].message.content
-        }
+        return {"status": "error", "message": f"OpenAI connection failed after fallbacks: {str(last_err)}"}
     except Exception as e:
         conn.status = "error"
         db.commit()

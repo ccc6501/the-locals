@@ -17,6 +17,7 @@ from auth_utils import get_current_active_user
 
 # AI imports
 import openai
+from openai import OpenAI
 import httpx
 
 load_dotenv()
@@ -124,61 +125,75 @@ async def simple_chat(request: SimpleChatRequest):
 
 
 async def _chat_openai_simple(request: SimpleChatRequest) -> SimpleChatResponse:
-    """Call OpenAI API for simple chat"""
-    
+    """Call OpenAI API for simple chat with graceful fallbacks.
+    Fallback order for models: user-specified -> gpt-4o -> gpt-4o-mini -> gpt-3.5-turbo
+    Provides clearer error messages for common failure modes (auth, quota, model not found).
+    """
+
     # Get API key from request or environment
-    api_key = None
-    if request.config and request.config.api_key:
-        api_key = request.config.api_key
-    else:
-        api_key = os.getenv("OPENAI_API_KEY")
-    
+    api_key = (request.config.api_key if request.config and request.config.api_key else os.getenv("OPENAI_API_KEY"))
     if not api_key:
         raise HTTPException(
             status_code=400,
             detail="OpenAI API key required. Provide in config.api_key or set OPENAI_API_KEY environment variable."
         )
-    
-    model = (request.config.model if request.config else None) or "gpt-4o"
-    
-    try:
-        client = openai.OpenAI(api_key=api_key)
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are The Local, a helpful AI assistant for a Tailscale-powered home hub. Be friendly, concise, and helpful. You can answer questions about the system, help manage the network, or just chat."
-                },
-                {
-                    "role": "user",
-                    "content": request.message
-                }
-            ],
-            temperature=request.temperature,
-            max_tokens=1000
-        )
-        
-        reply_text = response.choices[0].message.content or "No response from OpenAI"
-        
-        # Update AI status cache
-        update_ai_status("openai", "online")
-        
-        # Return with metadata - NO provider/model suffix in text
-        return SimpleChatResponse(
-            role="assistant",
-            text=reply_text,
-            provider="openai",
-            model=model,
-            temperature=request.temperature,
-            authorTag="TL",
-            createdAt=datetime.utcnow().isoformat()
-        )
-    
-    except Exception as e:
-        # Update AI status as offline
-        update_ai_status("openai", "offline")
-        raise HTTPException(status_code=500, detail=f"OpenAI API error: {str(e)}")
+
+    requested_model = (request.config.model if request.config else None) or "gpt-4o"
+    fallback_models = [requested_model, "gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo"]
+
+    # Deduplicate while preserving order
+    seen = set()
+    models_to_try = []
+    for m in fallback_models:
+        if m not in seen:
+            seen.add(m)
+            models_to_try.append(m)
+
+    last_error = None
+    client = OpenAI(api_key=api_key)
+
+    for model in models_to_try:
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are The Local, a helpful AI assistant for a Tailscale-powered home hub. Be friendly, concise, and helpful. You can answer questions about the system, help manage the network, or just chat."
+                    },
+                    {"role": "user", "content": request.message}
+                ],
+                temperature=request.temperature,
+                max_tokens=1000
+            )
+            reply_text = response.choices[0].message.content or "No response from OpenAI"
+
+            update_ai_status("openai", "online")
+            return SimpleChatResponse(
+                role="assistant",
+                text=reply_text,
+                provider="openai",
+                model=model if model == requested_model else f"{model} (fallback)",
+                temperature=request.temperature,
+                authorTag="TL",
+                createdAt=datetime.utcnow().isoformat()
+            )
+        except Exception as e:
+            last_error = e
+            # If error clearly indicates auth or quota, stop early
+            err_str = str(e).lower()
+            if any(k in err_str for k in ["incorrect api key", "invalid api key", "rate limit", "quota", "billing"]):
+                update_ai_status("openai", "offline")
+                raise HTTPException(status_code=502, detail=f"OpenAI auth/quota error: {str(e)}")
+            # For model not found, continue to next fallback
+            if "model" in err_str and "not" in err_str and "found" in err_str:
+                continue
+            # Other errors try next model; if only one model, break
+            continue
+
+    # If we reach here, all attempts failed
+    update_ai_status("openai", "offline")
+    raise HTTPException(status_code=500, detail=f"OpenAI API error (all fallbacks failed): {str(last_error)}")
 
 
 async def _chat_ollama_simple(request: SimpleChatRequest) -> SimpleChatResponse:

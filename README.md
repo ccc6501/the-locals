@@ -48,6 +48,7 @@ If the backend falls back to an alternate port (e.g. 8001), the frontend now pro
 ./start_all.ps1 -FrontendOnly  # Just frontend
 ./start_all.ps1 -Ports "8000,8001,8002" -LogMaxBytes 3145728  # Custom tray env
 ./start_all.ps1 -NoCleanup     # Skip killing existing processes
+./start_all.ps1 -Silent        # Run both services without visible terminals (logs to backend.log / frontend.log)
 ./start_all.ps1 -DryRun        # Show planned actions only
 ```
 
@@ -86,6 +87,7 @@ npm run dev
 - If port 8000 is busy, tray runner chooses next candidate (e.g., 8001).
 - Adjust API base in frontend if not using relative paths and port changes.
 - Logs rotate when exceeding `TRAY_LOG_MAX_BYTES` (default 2MB).
+- Use `-Silent` flag (or batch file with `-Silent`) for hidden background startup; output captured in `backend.log` and `frontend.log`.
 
 ## License
 

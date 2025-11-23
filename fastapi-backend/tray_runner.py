@@ -59,7 +59,7 @@ STATUS = "starting"  # starting|ok|error|restarting
 LOG_FILE = Path("backend_tray.log")
 LOG_MAX_BYTES = int(os.getenv("TRAY_LOG_MAX_BYTES", str(2 * 1024 * 1024)))  # 2MB default
 
-FRONTEND_URL = "http://localhost:5173"  # Adjust if production build served elsewhere
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")  # Can override for dev port changes
 BACKEND_DOCS_TEMPLATE = "http://localhost:{port}/docs"
 
 STOP_REQUESTED = False

@@ -62,7 +62,7 @@ function Start-Backend {
         $backendLog = Join-Path $root 'backend.log'
         if ($Silent) {
             $style = 'Hidden'
-            $noExit = ''
+            $noExit = '-NoExit'
             $redir = " *>& '$backendLog'"
         } else {
             $style = 'Normal'
@@ -85,7 +85,7 @@ function Start-Backend {
         $backendLog = Join-Path $root 'backend.log'
         if ($Silent) {
             $style = 'Hidden'
-            $noExit = ''
+            $noExit = '-NoExit'
             $redir = " *>& '$backendLog'"
         } else {
             $style = 'Normal'
@@ -121,7 +121,7 @@ function Start-Frontend {
     $frontendLog = Join-Path $root 'frontend.log'
     if ($Silent) {
         $style = 'Hidden'
-        $noExit = ''
+        $noExit = '-NoExit'
         $redir = " *>& '$frontendLog'"
     } else {
         $style = 'Normal'

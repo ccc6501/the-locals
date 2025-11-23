@@ -138,8 +138,11 @@ async def _chat_openai_simple(request: SimpleChatRequest) -> SimpleChatResponse:
             detail="OpenAI API key required. Provide in config.api_key or set OPENAI_API_KEY environment variable."
         )
 
-    requested_model = (request.config.model if request.config else None) or "gpt-4o"
-    fallback_models = [requested_model, "gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo"]
+    # Updated priority list; allow env override OPENAI_MODEL_PRIORITY (comma-separated)
+    requested_model = (request.config.model if request.config else None) or os.getenv("OPENAI_DEFAULT_MODEL", "gpt-4o-mini")
+    env_priority = os.getenv("OPENAI_MODEL_PRIORITY", "gpt-4o-mini,gpt-4o,gpt-4.1-mini,gpt-4.1,gpt-3.5-turbo")
+    priority_list = [m.strip() for m in env_priority.split(',') if m.strip()]
+    fallback_models = [requested_model] + priority_list
 
     # Deduplicate while preserving order
     seen = set()
@@ -151,9 +154,20 @@ async def _chat_openai_simple(request: SimpleChatRequest) -> SimpleChatResponse:
 
     last_error = None
     client = OpenAI(api_key=api_key)
+    # Try to get available models list once (non-fatal)
+    available_models = set()
+    try:
+        for mdl in client.models.list().data:
+            if hasattr(mdl, 'id'):
+                available_models.add(mdl.id)
+    except Exception as e:
+        print(f"[openai] model list failed (non-fatal): {e}")
 
     for model in models_to_try:
         try:
+            if available_models and model not in available_models:
+                # Skip quickly if we know model not present
+                raise Exception(f"Model '{model}' not in account model list")
             response = client.chat.completions.create(
                 model=model,
                 messages=[
@@ -186,14 +200,14 @@ async def _chat_openai_simple(request: SimpleChatRequest) -> SimpleChatResponse:
                 update_ai_status("openai", "offline")
                 raise HTTPException(status_code=502, detail=f"OpenAI auth/quota error: {str(e)}")
             # For model not found, continue to next fallback
-            if "model" in err_str and "not" in err_str and "found" in err_str:
+            if ("model" in err_str and "not" in err_str and "found" in err_str) or ("model" in err_str and "not" in err_str and "exist" in err_str):
                 continue
             # Other errors try next model; if only one model, break
             continue
 
     # If we reach here, all attempts failed
     update_ai_status("openai", "offline")
-    raise HTTPException(status_code=500, detail=f"OpenAI API error (all fallbacks failed): {str(last_error)}")
+    raise HTTPException(status_code=500, detail=f"OpenAI API error (all fallbacks failed): {repr(last_error)}")
 
 
 async def _chat_ollama_simple(request: SimpleChatRequest) -> SimpleChatResponse:

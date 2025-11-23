@@ -254,14 +254,25 @@ async def test_openai(
             pass
 
         client = OpenAI(api_key=api_key)
-        fallbacks = [model, "gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo"]
+        env_priority = os.getenv("OPENAI_MODEL_PRIORITY", "gpt-4o-mini,gpt-4o,gpt-4.1-mini,gpt-4.1,gpt-3.5-turbo")
+        fallbacks = [model] + [m.strip() for m in env_priority.split(',') if m.strip()]
         tried = []
         last_err = None
+        # Grab model list (non-fatal)
+        available_models = set()
+        try:
+            for mdl in client.models.list().data:
+                if hasattr(mdl, 'id'):
+                    available_models.add(mdl.id)
+        except Exception as e:
+            print(f"[openai] models.list failed (non-fatal): {e}")
         for m in fallbacks:
             if m in tried:
                 continue
             tried.append(m)
             try:
+                if available_models and m not in available_models:
+                    raise Exception(f"Model '{m}' not available to this key")
                 response = client.chat.completions.create(
                     model=m,
                     messages=[{"role": "user", "content": "Say 'test successful' if you receive this."}],
@@ -287,14 +298,14 @@ async def test_openai(
                     conn.status = "error"
                     db.commit()
                     return {"status": "error", "message": f"Quota/billing issue: {str(e)}"}
-                # For model not found, continue to next fallback
-                if "model" in err_lower and "not" in err_lower and "found" in err_lower:
+                # For model not found/unavailable, continue to next fallback
+                if ("model" in err_lower and "not" in err_lower and "found" in err_lower) or ("model" in err_lower and "not" in err_lower and "exist" in err_lower) or ("model" in err_lower and "not" in err_lower and "available" in err_lower):
                     continue
                 # Other errors: try next until exhausted
                 continue
         conn.status = "error"
         db.commit()
-        return {"status": "error", "message": f"OpenAI connection failed after fallbacks: {str(last_err)}"}
+        return {"status": "error", "message": f"OpenAI connection failed after fallbacks: {repr(last_err)}", "tried": tried}
     except Exception as e:
         conn.status = "error"
         db.commit()

@@ -1,7 +1,7 @@
 // ConnectionsPanel.jsx
 // Modular connections/settings view for provider configuration.
-import React from 'react';
-import { Cpu, Key, RefreshCw, Cloud, Wifi, Database } from 'lucide-react';
+import React, { useState } from 'react';
+import { Cpu, Key, RefreshCw, Cloud, Wifi, Database, Activity } from 'lucide-react';
 
 const formatModel = (m) => {
     if (!m) return '';
@@ -34,8 +34,44 @@ export function ConnectionsPanel({
     tailnetStats,
     tailnetLoading,
     tailnetError,
-    refreshTailnetStats
+    refreshTailnetStats,
+    apiBase
 }) {
+    const [openaiTestLoading, setOpenaiTestLoading] = useState(false);
+    const [openaiTestResult, setOpenaiTestResult] = useState(null);
+    const [openaiDebug, setOpenaiDebug] = useState(null);
+
+    async function testOpenAI() {
+        if (!openaiKey) {
+            setOpenaiTestResult({ status: 'key-missing', message: 'Enter API key first.' });
+            return;
+        }
+        setOpenaiTestLoading(true);
+        setOpenaiTestResult(null);
+        try {
+            const resp = await fetch(`${apiBase || ''}/api/connections/openai/test`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+            const data = await resp.json();
+            setOpenaiTestResult(data);
+        } catch (e) {
+            setOpenaiTestResult({ status: 'error', message: String(e) });
+        } finally {
+            setOpenaiTestLoading(false);
+        }
+    }
+
+    async function debugOpenAI() {
+        setOpenaiDebug(null);
+        try {
+            const resp = await fetch(`${apiBase || ''}/api/connections/openai/debug`);
+            const data = await resp.json();
+            setOpenaiDebug(data);
+        } catch (e) {
+            setOpenaiDebug({ error: String(e) });
+        }
+    }
     return (
         <div className="px-4 py-6 space-y-6">
             <div className="flex items-center gap-2">
@@ -99,6 +135,44 @@ export function ConnectionsPanel({
                                 onChange={e => setOpenaiModel(e.target.value)}
                                 className="mt-2 w-full bg-slate-900/80 border border-slate-700 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-violet-500/70"
                             />
+                        )}
+                        <div className="mt-4 grid grid-cols-2 gap-2">
+                            <button
+                                type="button"
+                                onClick={testOpenAI}
+                                disabled={openaiTestLoading}
+                                className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-slate-800/70 border border-slate-700 text-slate-200 text-xs hover:bg-slate-700/70 disabled:opacity-50"
+                            >
+                                <Activity className={`w-3.5 h-3.5 ${openaiTestLoading ? 'animate-spin' : ''}`} />
+                                {openaiTestLoading ? 'Testing…' : 'Test OpenAI'}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={debugOpenAI}
+                                className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-slate-800/70 border border-slate-700 text-slate-200 text-xs hover:bg-slate-700/70"
+                            >
+                                <RefreshCw className="w-3.5 h-3.5" />
+                                Debug Info
+                            </button>
+                        </div>
+                        {openaiTestResult && (
+                            <div className="mt-2 text-[10px] rounded-lg p-2 bg-slate-900/70 border border-slate-800 text-slate-300 whitespace-pre-wrap">
+                                Status: {openaiTestResult.status || 'unknown'}
+                                {openaiTestResult.message && <>
+                                    <br />{openaiTestResult.message}
+                                </>}
+                                {openaiTestResult.model && <>
+                                    <br />Model: {openaiTestResult.model}
+                                </>}
+                                {openaiTestResult.tried && <>
+                                    <br />Tried: {openaiTestResult.tried.join(', ')}
+                                </>}
+                            </div>
+                        )}
+                        {openaiDebug && (
+                            <div className="mt-2 text-[10px] rounded-lg p-2 bg-slate-900/70 border border-slate-800 text-slate-300 overflow-auto max-h-40">
+                                <pre className="m-0 font-mono text-[10px] leading-snug">{JSON.stringify(openaiDebug, null, 2)}</pre>
+                            </div>
                         )}
                     </div>
                 </div>

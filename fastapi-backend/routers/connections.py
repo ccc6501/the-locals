@@ -306,10 +306,52 @@ async def test_openai(
         conn.status = "error"
         db.commit()
         return {"status": "error", "message": f"OpenAI connection failed after fallbacks: {repr(last_err)}", "tried": tried}
-    except Exception as e:
-        conn.status = "error"
-        db.commit()
-        return {"status": "error", "message": f"OpenAI connection failed: {str(e)}"}
+
+
+@router.get("/openai/debug")
+async def debug_openai(
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    """Return diagnostic information about OpenAI configuration and model visibility.
+    Pyright is noisy about ORM attributes; this endpoint is best-effort only.
+    """  # pyright: ignore
+    import json
+    conn = db.query(Connection).filter(Connection.service == "openai").first()
+    config_raw = getattr(conn, 'config', None) if conn else None  # pyright: ignore
+    config_data = {}
+    if isinstance(config_raw, str) and config_raw.strip():
+        try:
+            config_data = json.loads(config_raw)
+        except Exception:
+            config_data = {}
+    api_key_val = (config_data.get("apiKey") or os.getenv("OPENAI_API_KEY") or "").strip()
+    api_key_present = bool(api_key_val)
+    model_cfg = config_data.get("model")
+    priority_env = os.getenv("OPENAI_MODEL_PRIORITY")
+    default_model_env = os.getenv("OPENAI_DEFAULT_MODEL")
+    available_models = []
+    error_models = None
+    if api_key_present:
+        try:
+            client = OpenAI(api_key=api_key_val)
+            for mdl in client.models.list().data:
+                mid = getattr(mdl, 'id', None)
+                if isinstance(mid, str):
+                    available_models.append(mid)
+        except Exception as e:
+            error_models = str(e)
+    return {
+        "configured": bool(conn and getattr(conn, 'enabled', False)),  # pyright: ignore
+        "status": getattr(conn, 'status', 'missing') if conn else 'missing',  # pyright: ignore
+        "api_key_present": api_key_present,
+        "configured_model": model_cfg,
+        "env_default_model": default_model_env,
+        "env_priority": priority_env,
+        "available_models_count": len(available_models),
+        "available_models_sample": available_models[:25],
+        "model_listing_error": error_models
+    }
 
 
 @router.put("/ollama")

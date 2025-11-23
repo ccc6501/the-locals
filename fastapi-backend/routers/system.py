@@ -107,15 +107,47 @@ async def get_public_system_summary():
             socket.create_connection(("8.8.8.8", 53), timeout=1.5)
         except Exception:
             network_status = "Disconnected"
+        net = psutil.net_io_counters()
         return {
             "cpu": cpu_percent,
             "memory": memory.percent,
             "disk": disk.percent,
             "uptime": get_uptime(),
             "networkStatus": network_status,
+            "bytes_sent": net.bytes_sent,
+            "bytes_recv": net.bytes_recv
         }
     except Exception as e:
         return {"error": str(e)}
+
+@router.post("/tailscale/exitnode")
+async def set_exit_node(payload: dict):
+    """Enable or disable tailscale exit node. Requires tailscale CLI installed.
+    Body: {"action": "enable", "nodeId": "<ip_or_name>"} OR {"action": "disable"}
+    """
+    action = payload.get("action")
+    node_id = payload.get("nodeId")
+    if action not in {"enable", "disable"}:
+        return {"status": "error", "error": "Invalid action"}
+    try:
+        if action == "disable":
+            cmd = ["tailscale", "set", "--exit-node="]
+        else:
+            if not node_id:
+                return {"status": "error", "error": "nodeId required for enable"}
+            cmd = ["tailscale", "set", f"--exit-node={node_id}"]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=8)
+        if result.returncode != 0:
+            return {"status": "error", "error": result.stderr.strip() or "tailscale set failed"}
+        # Return updated summary after change
+        summary = await get_tailscale_summary()
+        return {"status": "ok", "summary": summary}
+    except FileNotFoundError:
+        return {"status": "error", "error": "tailscale not installed"}
+    except subprocess.TimeoutExpired:
+        return {"status": "error", "error": "tailscale set timed out"}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
 
 
 def get_uptime() -> str:

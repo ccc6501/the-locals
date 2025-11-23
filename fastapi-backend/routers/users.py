@@ -72,6 +72,12 @@ async def get_user_summary(db: Session = Depends(get_db)):
         "users": user_list
     }
 
+@router.get("/public/count")
+async def get_public_user_count(db: Session = Depends(get_db)):
+    """Unauthenticated lightweight user count for drawer (no PII)."""
+    total = db.query(User).count()
+    return {"total": total}
+
 
 @router.get("", response_model=List[UserResponse], response_model_by_alias=True)
 async def get_users(

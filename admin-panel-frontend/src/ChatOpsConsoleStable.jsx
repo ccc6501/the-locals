@@ -7,6 +7,7 @@ import { useProviderStatus } from './hooks/useProviderStatus';
 import { ErrorToasts } from './components/ErrorToasts';
 import { ConnectionsPanel } from './components/ConnectionsPanel';
 import { DashboardPanel } from './components/DashboardPanel';
+import { SystemPanel } from './components/SystemPanel';
 import {
     Bot,
     Menu,
@@ -90,6 +91,8 @@ const ChatOpsConsoleStable = () => {
     const [tailnetError, setTailnetError] = useState(null);
     const [systemSummary, setSystemSummary] = useState(null);
     const [aiRequestCount, setAiRequestCount] = useState(() => parseInt(localStorage.getItem('theLocal.aiRequestCount') || '0', 10));
+    const [userCount, setUserCount] = useState(null);
+    const [logs, setLogs] = useState([]);
     const [ollamaStatus, setOllamaStatus] = useState(null);
     const [errors, setErrors] = useState([]); // toast errors
 
@@ -132,9 +135,9 @@ const ChatOpsConsoleStable = () => {
     useEffect(() => { const c = messagesContainerRef.current; if (c) c.scrollTop = c.scrollHeight; }, [messages]);
 
     // Initial status boot (models + tailnet fetch)
-    useEffect(() => { refreshOllamaModels(); refreshTailnetStats(); refreshSystemSummary(); }, []);
+    useEffect(() => { refreshOllamaModels(); refreshTailnetStats(); refreshSystemSummary(); refreshUserCount(); refreshLogs(); }, []);
     useEffect(() => {
-        const interval = setInterval(() => { refreshTailnetStats(); refreshSystemSummary(); }, 30000);
+        const interval = setInterval(() => { refreshTailnetStats(); refreshSystemSummary(); refreshUserCount(); refreshLogs(); }, 30000);
         return () => clearInterval(interval);
     }, []);
 
@@ -186,6 +189,31 @@ const ChatOpsConsoleStable = () => {
         } catch (e) {
             console.warn('System summary fetch failed', e.message);
         }
+    };
+
+    const refreshUserCount = async () => {
+        try {
+            const res = await fetch(`${API_BASE}/api/users/public/count`);
+            if (!res.ok) throw new Error('user count');
+            const data = await res.json();
+            if (typeof data.total === 'number') setUserCount(data.total);
+        } catch (e) { /* ignore */ }
+    };
+
+    const resolveToken = () => {
+        const candidates = ['chatops_token','auth_token','jwt','access_token'];
+        for (const k of candidates) { const v = localStorage.getItem(k); if (v) return v; }
+        return null;
+    };
+    const refreshLogs = async () => {
+        const token = resolveToken();
+        if (!token) { setLogs(null); return; }
+        try {
+            const res = await fetch(`${API_BASE}/api/system/logs?limit=25`, { headers: { 'Authorization': `Bearer ${token}` } });
+            if (!res.ok) throw new Error('logs');
+            const data = await res.json();
+            if (Array.isArray(data)) setLogs(data); else setLogs([]);
+        } catch (e) { setLogs([]); }
     };
 
     const sendMessageToBackend = async (text) => {
@@ -324,17 +352,19 @@ const ChatOpsConsoleStable = () => {
                                 <div className="mt-3 space-y-2 text-[10px]">
                                     <div>
                                         <div className="flex justify-between"><span className="text-slate-500">CPU</span><span className="text-slate-400">{systemSummary?.cpu ?? '--'}%</span></div>
-                                        <div className="h-2 rounded bg-slate-800 overflow-hidden"><div style={{width:`${systemSummary?.cpu||0}%`}} className="h-full bg-violet-500/70" /></div>
+                                        <div className="h-2 rounded bg-slate-800 overflow-hidden"><div style={{ width: `${systemSummary?.cpu || 0}%` }} className="h-full bg-violet-500/70" /></div>
                                     </div>
                                     <div>
                                         <div className="flex justify-between"><span className="text-slate-500">Mem</span><span className="text-slate-400">{systemSummary?.memory ?? '--'}%</span></div>
-                                        <div className="h-2 rounded bg-slate-800 overflow-hidden"><div style={{width:`${systemSummary?.memory||0}%`}} className="h-full bg-sky-500/70" /></div>
+                                        <div className="h-2 rounded bg-slate-800 overflow-hidden"><div style={{ width: `${systemSummary?.memory || 0}%` }} className="h-full bg-sky-500/70" /></div>
                                     </div>
                                     <div>
                                         <div className="flex justify-between"><span className="text-slate-500">Disk</span><span className="text-slate-400">{systemSummary?.disk ?? '--'}%</span></div>
-                                        <div className="h-2 rounded bg-slate-800 overflow-hidden"><div style={{width:`${systemSummary?.disk||0}%`}} className="h-full bg-emerald-500/70" /></div>
+                                        <div className="h-2 rounded bg-slate-800 overflow-hidden"><div style={{ width: `${systemSummary?.disk || 0}%` }} className="h-full bg-emerald-500/70" /></div>
                                     </div>
-                                    <div className="flex justify-between pt-1"><span className="text-slate-500">Users (approx)</span><span className="text-slate-400">{new Set(messages.filter(m=>m.role==='user').map(m=>m.authorTag||'U')).size}</span></div>
+                                    <div className="flex justify-between pt-1"><span className="text-slate-500">Users</span><span className="text-slate-400">{userCount ?? new Set(messages.filter(m => m.role === 'user').map(m => m.authorTag || 'U')).size}</span></div>
+                                    <div className="flex justify-between"><span className="text-slate-500">Net Sent</span><span className="text-slate-400">{systemSummary?.bytes_sent ? (systemSummary.bytes_sent/1048576).toFixed(1)+' MB' : '--'}</span></div>
+                                    <div className="flex justify-between"><span className="text-slate-500">Net Recv</span><span className="text-slate-400">{systemSummary?.bytes_recv ? (systemSummary.bytes_recv/1048576).toFixed(1)+' MB' : '--'}</span></div>
                                     <div className="flex justify-between"><span className="text-slate-500">AI Requests</span><span className="text-slate-400">{aiRequestCount}</span></div>
                                 </div>
                             </div>
@@ -361,7 +391,7 @@ const ChatOpsConsoleStable = () => {
             <main className="chat-app-main">
                 <div className="chat-scroll-area" ref={messagesContainerRef}>
                     {activeView === 'chat' && renderMessages()}
-                    {activeView === 'dashboard' && <DashboardPanel tailnetStats={tailnetStats} systemSummary={systemSummary} recentMessages={messages} />}
+                    {activeView === 'dashboard' && <DashboardPanel recentMessages={messages} logs={logs} />}
                     {activeView === 'connections' && (
                         <ConnectionsPanel
                             provider={provider}
@@ -390,7 +420,8 @@ const ChatOpsConsoleStable = () => {
                             refreshTailnetStats={refreshTailnetStats}
                         />
                     )}
-                    {activeView !== 'chat' && activeView !== 'connections' && activeView !== 'dashboard' && <ViewPlaceholder view={activeView} />}
+                    {activeView === 'system' && <SystemPanel tailnetStats={tailnetStats} refreshTailnetStats={refreshTailnetStats} exitNodeChanging={tailnetLoading} setExitNodeChanging={setTailnetLoading} />}
+                    {activeView !== 'chat' && activeView !== 'connections' && activeView !== 'dashboard' && activeView !== 'system' && <ViewPlaceholder view={activeView} />}
                 </div>
                 {activeView === 'chat' && (
                     <div className="chat-input-wrapper">

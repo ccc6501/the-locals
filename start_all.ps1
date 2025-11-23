@@ -69,7 +69,12 @@ function Start-Backend {
             $noExit = '-NoExit'
             $redir = ''
         }
-        Start-Process powershell -ArgumentList @($noExit, '-Command', "cd '$backendPath'; python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload$redir") -WindowStyle $style
+        $cmd = "cd '$backendPath'; python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload$redir"
+        if ($Silent) {
+            Start-Process powershell -ArgumentList @('-Command', $cmd) -WindowStyle $style
+        } else {
+            Start-Process powershell -ArgumentList @('-NoExit','-Command', $cmd) -WindowStyle $style
+        }
     }
     else {
         $envCmd = ""
@@ -87,7 +92,12 @@ function Start-Backend {
             $noExit = '-NoExit'
             $redir = ''
         }
-        Start-Process powershell -ArgumentList @($noExit, '-Command', "cd '$backendPath'; $envCmd python tray_runner.py$redir") -WindowStyle $style
+        $cmd = "cd '$backendPath'; $envCmd python tray_runner.py$redir"
+        if ($Silent) {
+            Start-Process powershell -ArgumentList @('-Command', $cmd) -WindowStyle $style
+        } else {
+            Start-Process powershell -ArgumentList @('-NoExit','-Command', $cmd) -WindowStyle $style
+        }
     }
 }
 
@@ -118,7 +128,12 @@ function Start-Frontend {
         $noExit = '-NoExit'
         $redir = ''
     }
-    Start-Process powershell -ArgumentList @($noExit, '-Command', "cd '$frontendPath'; npm run dev$redir") -WindowStyle $style
+    $cmd = "cd '$frontendPath'; npm run dev$redir"
+    if ($Silent) {
+        Start-Process powershell -ArgumentList @('-Command', $cmd) -WindowStyle $style
+    } else {
+        Start-Process powershell -ArgumentList @('-NoExit','-Command', $cmd) -WindowStyle $style
+    }
 }
 
 Cleanup

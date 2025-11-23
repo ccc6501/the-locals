@@ -5,7 +5,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useChatPersistence } from './hooks/useChatPersistence';
 import { useProviderStatus } from './hooks/useProviderStatus';
 import { ErrorToasts } from './components/ErrorToasts';
-import ConnectionsPanel from './components/ConnectionsPanel';
+import { ConnectionsPanel } from './components/ConnectionsPanel';
 import {
     Bot,
     Menu,
@@ -84,6 +84,9 @@ const ChatOpsConsoleStable = () => {
     // Status
     const [lastChatOk, setLastChatOk] = useState(null);
     const [tailnetStatus, setTailnetStatus] = useState(null);
+    const [tailnetStats, setTailnetStats] = useState(null);
+    const [tailnetLoading, setTailnetLoading] = useState(false);
+    const [tailnetError, setTailnetError] = useState(null);
     const [ollamaStatus, setOllamaStatus] = useState(null);
     const [errors, setErrors] = useState([]); // toast errors
 
@@ -104,18 +107,29 @@ const ChatOpsConsoleStable = () => {
         return m.length > 12 ? m.slice(0, 9) + '…' : m;
     };
 
+    // Cloud storage config
+    const [cloudPath, setCloudPath] = useState(() => localStorage.getItem('theLocal.cloudPath') || '/mnt/data');
+    const [cloudEndpoint, setCloudEndpoint] = useState(() => localStorage.getItem('theLocal.cloudEndpoint') || '');
+
+    // Helper to push error to toast list
+    const pushError = (msg) => {
+        setErrors(prev => [{ id: `e-${Date.now()}`, message: msg }, ...prev.slice(0, 9)]);
+    };
+
     // Persistence effects
     useEffect(() => localStorage.setItem('theLocal.provider', provider), [provider]);
     useEffect(() => localStorage.setItem('chatops_openai_key', openaiKey), [openaiKey]);
     useEffect(() => localStorage.setItem('chatops_openai_model', openaiModel), [openaiModel]);
     useEffect(() => localStorage.setItem('chatops_ollama_url', ollamaUrl), [ollamaUrl]);
     useEffect(() => localStorage.setItem('theLocal.ollamaModel', ollamaModel), [ollamaModel]);
+    useEffect(() => localStorage.setItem('theLocal.cloudPath', cloudPath), [cloudPath]);
+    useEffect(() => localStorage.setItem('theLocal.cloudEndpoint', cloudEndpoint), [cloudEndpoint]);
 
     // Scroll
     useEffect(() => { const c = messagesContainerRef.current; if (c) c.scrollTop = c.scrollHeight; }, [messages]);
 
-    // Initial status boot (models + tailnet flag)
-    useEffect(() => { refreshOllamaModels(); setTailnetStatus('online'); }, []);
+    // Initial status boot (models + tailnet fetch)
+    useEffect(() => { refreshOllamaModels(); refreshTailnetStats(); }, []);
 
     const refreshOllamaModels = async () => {
         setOllamaModelsLoading(true);
@@ -127,6 +141,25 @@ const ChatOpsConsoleStable = () => {
             setOllamaStatus('online');
             if (data.models?.length && !data.models.includes(ollamaModel)) setOllamaModel(data.models[0]);
         } catch (e) { console.error(e); setOllamaStatus('offline'); setOllamaModels([]); } finally { setOllamaModelsLoading(false); }
+    };
+
+    const refreshTailnetStats = async () => {
+        setTailnetLoading(true);
+        setTailnetError(null);
+        try {
+            const res = await fetch('/api/system/tailscale/summary');
+            if (!res.ok) throw new Error(`Tailnet HTTP ${res.status}`);
+            const data = await res.json();
+            setTailnetStats({ ...data, last_check: new Date().toLocaleTimeString() });
+            setTailnetStatus(data.status || 'online');
+        } catch (err) {
+            console.error(err);
+            setTailnetStatus('offline');
+            setTailnetError(err.message);
+            pushError(`Tailnet refresh failed: ${err.message}`);
+        } finally {
+            setTailnetLoading(false);
+        }
     };
 
     const sendMessageToBackend = async (text) => {
@@ -300,6 +333,14 @@ const ChatOpsConsoleStable = () => {
                             temp={temp}
                             setTemp={setTemp}
                             providerMeta={providerMeta}
+                            cloudPath={cloudPath}
+                            setCloudPath={setCloudPath}
+                            cloudEndpoint={cloudEndpoint}
+                            setCloudEndpoint={setCloudEndpoint}
+                            tailnetStats={tailnetStats}
+                            tailnetLoading={tailnetLoading}
+                            tailnetError={tailnetError}
+                            refreshTailnetStats={refreshTailnetStats}
                         />
                     )}
                     {activeView !== 'chat' && activeView !== 'connections' && <ViewPlaceholder view={activeView} />}

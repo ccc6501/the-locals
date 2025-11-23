@@ -147,8 +147,16 @@ const ChatOpsConsoleStable = () => {
         setTailnetLoading(true);
         setTailnetError(null);
         try {
-            const res = await fetch('/api/system/tailscale/summary');
-            if (!res.ok) throw new Error(`Tailnet HTTP ${res.status}`);
+            const url = `${API_BASE}/api/system/tailscale/summary`;
+            const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+            const contentType = res.headers.get('content-type') || '';
+            if (!res.ok) {
+                throw new Error(`Tailnet HTTP ${res.status}`);
+            }
+            if (!contentType.includes('application/json')) {
+                const text = await res.text();
+                throw new Error(`Unexpected non-JSON response (${contentType || 'unknown'}): ${text.slice(0,120)}...`);
+            }
             const data = await res.json();
             setTailnetStats({ ...data, last_check: new Date().toLocaleTimeString() });
             setTailnetStatus(data.status || 'online');

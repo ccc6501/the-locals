@@ -164,32 +164,73 @@ Server will start at: **<http://localhost:8000>**
 
 API Documentation: **<http://localhost:8000/docs>**
 
+### 7. Optional: Headless Tray Mode (Windows)
+
+You can run the backend in the system tray (no console window) using the tray runner script.
+
+```bash
+pip install -r requirements.txt  # ensure pystray & Pillow installed
+python tray_runner.py
+```
+
+The tray icon menu provides:
+
+- Open UI (frontend dev server or deployed interface)
+- Open API Docs
+- Restart Backend
+- Stop & Exit
+
+To auto-start at login:
+
+1. Create a shortcut to `tray_runner.py` (or its PyInstaller-built EXE) in `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup`.
+1. (Optional) Package with PyInstaller for a single executable:
+
+  ```bash
+  pip install pyinstaller
+  pyinstaller --noconfirm --onefile --windowed tray_runner.py
+  ```
+
+1. Place generated `tray_runner.exe` shortcut in the Startup folder.
+
+Frontend auto-open URL defaults to `http://localhost:5173` — adjust `FRONTEND_URL` in `tray_runner.py` for production.
+
+#### Tray Environment Variables
+
+You can adjust tray behavior via environment variables:
+
+```text
+BACKEND_PORTS=8000,8001,8002      # Override port fallback order
+TRAY_LOG_MAX_BYTES=2097152        # Maximum size in bytes before rotating backend_tray.log
+```
+
+Place these in your shell/session or a wrapper script before launching the tray runner.
+
 ## 📚 API Endpoints
 
-### Authentication
+### Authentication Endpoints
 
-```
-POST   /api/auth/login       # User login
-POST   /api/auth/logout      # User logout
-GET    /api/auth/profile     # Get current user profile
-POST   /api/auth/register    # Register new user
-```
-
-### Users
-
-```
-GET    /api/users            # List all users
-GET    /api/users/{id}       # Get user by ID
-POST   /api/users            # Create user (admin)
-PUT    /api/users/{id}       # Update user (admin)
-DELETE /api/users/{id}       # Delete user (admin)
-PATCH  /api/users/{id}/suspend   # Suspend user (admin)
-PATCH  /api/users/{id}/activate  # Activate user (admin)
+```text
+POST   /api/auth/login                # User login
+POST   /api/auth/logout               # User logout
+GET    /api/auth/profile              # Get current user profile
+POST   /api/auth/register             # Register new user
 ```
 
-### Chat
+### User Endpoints
 
+```text
+GET    /api/users                     # List all users
+GET    /api/users/{id}                # Get user by ID
+POST   /api/users                     # Create user (admin)
+PUT    /api/users/{id}                # Update user (admin)
+DELETE /api/users/{id}                # Delete user (admin)
+PATCH  /api/users/{id}/suspend        # Suspend user (admin)
+PATCH  /api/users/{id}/activate       # Activate user (admin)
 ```
+
+### Chat Endpoints
+
+```text
 GET    /api/chat/threads                  # List all threads
 POST   /api/chat/threads                  # Create thread
 GET    /api/chat/threads/{id}/messages    # Get messages
@@ -197,60 +238,60 @@ POST   /api/chat/threads/{id}/messages    # Send message
 DELETE /api/chat/threads/{id}             # Delete thread
 ```
 
-### Invites
+### Invite Endpoints
 
-```
-GET    /api/invites          # List all invites
-POST   /api/invites          # Create invite (admin)
-PATCH  /api/invites/{id}/revoke  # Revoke invite (admin)
-DELETE /api/invites/{id}     # Delete invite (admin)
-```
-
-### Connections
-
-```
-GET    /api/connections              # Get all connections
-PUT    /api/connections/tailscale    # Update Tailscale config
-POST   /api/connections/tailscale/test  # Test Tailscale
-PUT    /api/connections/openai       # Update OpenAI config
-POST   /api/connections/openai/test  # Test OpenAI
-PUT    /api/connections/ollama       # Update Ollama config
-POST   /api/connections/ollama/test  # Test Ollama
+```text
+GET    /api/invites                       # List all invites
+POST   /api/invites                       # Create invite (admin)
+PATCH  /api/invites/{id}/revoke           # Revoke invite (admin)
+DELETE /api/invites/{id}                  # Delete invite (admin)
 ```
 
-### Cloud Storage
+### Connection Endpoints
 
-```
-GET    /api/storage/config           # Get storage config
-PUT    /api/storage/config           # Update storage config
-GET    /api/storage/files?path=/     # List files
-POST   /api/storage/upload           # Upload file
-GET    /api/storage/download/{id}    # Download file
-DELETE /api/storage/files/{id}       # Delete file
-```
-
-### Settings
-
-```
-GET    /api/settings                # Get settings
-PUT    /api/settings                # Update settings (admin)
-POST   /api/settings/notifications/send  # Send notification (admin)
+```text
+GET    /api/connections                   # Get all connections
+PUT    /api/connections/tailscale         # Update Tailscale config
+POST   /api/connections/tailscale/test    # Test Tailscale
+PUT    /api/connections/openai            # Update OpenAI config
+POST   /api/connections/openai/test       # Test OpenAI
+PUT    /api/connections/ollama            # Update Ollama config
+POST   /api/connections/ollama/test       # Test Ollama
 ```
 
-### System
+### Cloud Storage Endpoints
 
-```
-GET    /api/system/health           # Get system health metrics
-GET    /api/system/logs             # Get system logs (admin)
-POST   /api/system/restart          # Restart services (admin)
-POST   /api/system/backup           # Create backup (admin)
-GET    /api/system/metrics          # Get detailed metrics (admin)
+```text
+GET    /api/storage/config                # Get storage config
+PUT    /api/storage/config                # Update storage config
+GET    /api/storage/files?path=/          # List files
+POST   /api/storage/upload                # Upload file
+GET    /api/storage/download/{id}         # Download file
+DELETE /api/storage/files/{id}            # Delete file
 ```
 
-### WebSocket
+### Settings Endpoints
 
+```text
+GET    /api/settings                      # Get settings
+PUT    /api/settings                      # Update settings (admin)
+POST   /api/settings/notifications/send   # Send notification (admin)
 ```
-WS     /ws?token={jwt_token}        # WebSocket connection
+
+### System Endpoints
+
+```text
+GET    /api/system/health                 # Get system health metrics
+GET    /api/system/logs                   # Get system logs (admin)
+POST   /api/system/restart                # Restart services (admin)
+POST   /api/system/backup                 # Create backup (admin)
+GET    /api/system/metrics                # Get detailed metrics (admin)
+```
+
+### WebSocket Endpoint
+
+```text
+WS     /ws?token={jwt_token}              # WebSocket connection
 ```
 
 ## 🔐 Authentication
@@ -277,7 +318,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGc...
 
 ## 💾 Database Schema
 
-### Users
+### Users Table
 
 - id, name, handle, email, hashed_password
 - role (admin/moderator/user)
@@ -285,26 +326,26 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGc...
 - devices, ai_usage, storage_used
 - created_at, updated_at
 
-### Threads
+### Threads Table
 
 - id, type (ai/group/dm), name, avatar
 - user_id, created_at, updated_at
 
-### Messages
+### Messages Table
 
 - id, thread_id, user_id, sender, text
 - timestamp
 
-### Invites
+### Invites Table
 
 - id, code, uses, max_uses, status
 - created_at, created_by
 
-### Connections
+### Connections Table
 
 - id, service, enabled, config (JSON), status
 
-### Settings
+### Settings Table
 
 - id, key, value
 

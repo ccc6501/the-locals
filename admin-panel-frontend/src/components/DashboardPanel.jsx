@@ -12,7 +12,7 @@ export function DashboardPanel({ recentMessages, logs }) {
     const bulletin = `Welcome to The Local Dashboard.\n\nThis hub gives you a quick pulse of your Tailnet, AI activity, and system health. Use the side drawer for live resource gauges. Tabs will grow as more services come online.`;
     const tailnetInviteUrl = window.location.origin; // Placeholder; could become an actual invite URL
 
-        const recentChats = recentMessages.filter(m => m.role === 'user').slice(-8).reverse();
+    const recentChats = recentMessages.filter(m => m.role === 'user').slice(-8).reverse();
 
     return (
         <div className="p-6 space-y-6">
@@ -49,7 +49,7 @@ export function DashboardPanel({ recentMessages, logs }) {
                 )}
             </div>
 
-                    {/* Removed quick stats: now only in drawer */}
+            {/* Removed quick stats: now only in drawer */}
 
             {/* Recent Chats */}
             <div className="rounded-xl border border-slate-800 bg-slate-950/50">
@@ -65,27 +65,27 @@ export function DashboardPanel({ recentMessages, logs }) {
                 </div>
             </div>
 
-                    {/* Logs Feed */}
-                    <div className="rounded-xl border border-slate-800 bg-slate-950/50 overflow-hidden">
-                        <button onClick={()=>{const v=!showLogs; setShowLogs(v); persist('dashboard.showLogs', v);}} className="w-full flex items-center gap-2 px-4 py-3 text-sm font-semibold text-slate-200 hover:bg-slate-900/60">
-                            {showLogs ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-                            <FileText className="w-4 h-4 text-emerald-400" />
-                            <span>System Logs</span>
-                        </button>
-                        {showLogs && (
-                            <div className="max-h-72 overflow-y-auto divide-y divide-slate-800 text-[12px]">
-                                {logs === null && <div className="px-4 py-3 text-slate-500">(No auth token found for logs)</div>}
-                                {Array.isArray(logs) && !logs.length && <div className="px-4 py-3 text-slate-500">No logs available.</div>}
-                                {Array.isArray(logs) && logs.map(l => (
-                                    <div key={l.id || l.timestamp} className="px-4 py-2 flex justify-between gap-3">
-                                        <span className="text-slate-400 truncate">{l.timestamp || l.created_at}</span>
-                                        <span className="text-slate-300 flex-1 truncate">{l.message || l.event || JSON.stringify(l)}</span>
-                                        {l.level && <span className={`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 ${l.level==='error'?'text-rose-400': l.level==='warn'?'text-amber-400':'text-emerald-400'}`}>{l.level}</span>}
-                                    </div>
-                                ))}
+            {/* Logs Feed */}
+            <div className="rounded-xl border border-slate-800 bg-slate-950/50 overflow-hidden">
+                <button onClick={() => { const v = !showLogs; setShowLogs(v); persist('dashboard.showLogs', v); }} className="w-full flex items-center gap-2 px-4 py-3 text-sm font-semibold text-slate-200 hover:bg-slate-900/60">
+                    {showLogs ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                    <FileText className="w-4 h-4 text-emerald-400" />
+                    <span>System Logs</span>
+                </button>
+                {showLogs && (
+                    <div className="max-h-72 overflow-y-auto divide-y divide-slate-800 text-[12px]">
+                        {logs === null && <div className="px-4 py-3 text-slate-500">(No auth token found for logs)</div>}
+                        {Array.isArray(logs) && !logs.length && <div className="px-4 py-3 text-slate-500">No logs available.</div>}
+                        {Array.isArray(logs) && logs.map(l => (
+                            <div key={l.id || l.timestamp} className="px-4 py-2 flex justify-between gap-3">
+                                <span className="text-slate-400 truncate">{l.timestamp || l.created_at}</span>
+                                <span className="text-slate-300 flex-1 truncate">{l.message || l.event || JSON.stringify(l)}</span>
+                                {l.level && <span className={`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 ${l.level === 'error' ? 'text-rose-400' : l.level === 'warn' ? 'text-amber-400' : 'text-emerald-400'}`}>{l.level}</span>}
                             </div>
-                        )}
+                        ))}
                     </div>
+                )}
+            </div>
         </div>
     );
 }

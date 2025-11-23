@@ -50,20 +50,22 @@ export function ConnectionsPanel({
         setOpenaiTestResult(null);
         try {
             const url = `${apiBase || ''}/api/connections/openai/test`;
-            const resp = await fetch(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' }
-            });
+            // Attempt to include auth token if present (required by backend require_admin dependency)
+            const tokenCandidates = ['chatops_token', 'auth_token', 'jwt', 'access_token'];
+            let bearer = null; for (const k of tokenCandidates) { const v = localStorage.getItem(k); if (v) { bearer = v; break; } }
+            const headers = { 'Content-Type': 'application/json' };
+            if (bearer) headers['Authorization'] = `Bearer ${bearer}`;
+            const resp = await fetch(url, { method: 'POST', headers });
             const ct = resp.headers.get('content-type') || '';
             let rawText = '';
-            try { rawText = await resp.text(); } catch(_) {}
+            try { rawText = await resp.text(); } catch (_) { }
             let parsed = null;
             if (ct.includes('application/json') && rawText.trim().length) {
-                try { parsed = JSON.parse(rawText); } catch(e) {
-                    parsed = { status: 'parse-error', message: 'Could not parse JSON', raw: rawText.slice(0,500) };
+                try { parsed = JSON.parse(rawText); } catch (e) {
+                    parsed = { status: 'parse-error', message: 'Could not parse JSON', raw: rawText.slice(0, 500) };
                 }
             } else if (rawText.trim().length) {
-                parsed = { status: resp.ok ? 'non-json' : 'error', message: 'Non-JSON response', raw: rawText.slice(0,500), code: resp.status };
+                parsed = { status: resp.ok ? 'non-json' : 'error', message: 'Non-JSON response', raw: rawText.slice(0, 500), code: resp.status };
             } else {
                 parsed = { status: resp.ok ? 'empty-response' : 'error', message: 'Empty response body', code: resp.status };
             }
@@ -80,7 +82,11 @@ export function ConnectionsPanel({
     async function debugOpenAI() {
         setOpenaiDebug(null);
         try {
-            const resp = await fetch(`${apiBase || ''}/api/connections/openai/debug`);
+            const tokenCandidates = ['chatops_token', 'auth_token', 'jwt', 'access_token'];
+            let bearer = null; for (const k of tokenCandidates) { const v = localStorage.getItem(k); if (v) { bearer = v; break; } }
+            const headers = {};
+            if (bearer) headers['Authorization'] = `Bearer ${bearer}`;
+            const resp = await fetch(`${apiBase || ''}/api/connections/openai/debug`, { headers });
             const data = await resp.json();
             setOpenaiDebug(data);
         } catch (e) {

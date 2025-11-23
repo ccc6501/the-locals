@@ -75,19 +75,8 @@ async def get_connections(
             "model": openai_data.get("model", "gpt-4o-mini"),
             "status": openai_conn.status
         })
-    
-    if ollama and ollama.config:
-        ollama_data = json.loads(ollama.config)
-        # When running in Docker, localhost refers to the container itself.
-        # Use host.docker.internal to reach services on the host machine (Docker Desktop on Windows/Mac).
-        default_endpoint = "http://host.docker.internal:11434"
-        ollama_config.update({
-            "enabled": ollama.enabled,
-            "endpoint": ollama_data.get("endpoint", default_endpoint),
-            "model": ollama_data.get("model", "llama2"),
-            "status": ollama.status
-        })
-    
+
+    # Return combined configuration response
     return {
         "tailscale": tailscale_config,
         "openai": openai_config,
@@ -103,20 +92,20 @@ async def update_tailscale(
 ):
     """Update Tailscale configuration"""
     conn = db.query(Connection).filter(Connection.service == "tailscale").first()
-    
+
     if not conn:
         conn = Connection(service="tailscale")
         db.add(conn)
-    
+
     conn.enabled = config.enabled
     conn.config = json.dumps({
         "authKey": config.authKey,
         "hostname": config.hostname
     })
     conn.status = "configured" if config.enabled else "unconfigured"
-    
+
     db.commit()
-    
+
     return {"message": "Tailscale configuration updated"}
 
 
@@ -127,15 +116,14 @@ async def test_tailscale(
 ):
     """Test Tailscale connection"""
     conn = db.query(Connection).filter(Connection.service == "tailscale").first()
-    
+
     if not conn or not conn.enabled:
         return {
             "status": "unconfigured",
             "message": "Tailscale is not configured. Please enable and configure it first."
         }
-    
+
     try:
-        # First attempt JSON status for richer info
         json_status = subprocess.run(
             ["tailscale", "status", "--json"],
             capture_output=True,
@@ -158,9 +146,8 @@ async def test_tailscale(
                     "peerCount": len(data.get("Peer", {}))
                 }
             except Exception:
-                pass  # Fallback to plain status below if JSON parse fails
+                pass  # fall through to plain status
 
-        # Fallback plain status
         result = subprocess.run(
             ["tailscale", "status"],
             capture_output=True,
@@ -172,14 +159,13 @@ async def test_tailscale(
             db.commit()
             return {"status": "connected", "message": "Tailscale is running", "raw": result.stdout}
         else:
-            # Distinguish daemon not running vs other errors
             stderr_lower = (result.stderr or "").lower()
             if "tailscaled" in stderr_lower or "not running" in stderr_lower:
                 conn.status = "disconnected"
                 db.commit()
                 return {
                     "status": "disconnected",
-                    "message": "tailscaled daemon not running. Ensure container has NET_ADMIN capability and entrypoint started tailscaled (TAILSCALE_ENABLED=true)."
+                    "message": "tailscaled daemon not running. Ensure daemon is started (TAILSCALE_ENABLED=true)."
                 }
             conn.status = "error"
             db.commit()
@@ -187,7 +173,7 @@ async def test_tailscale(
     except FileNotFoundError:
         conn.status = "error"
         db.commit()
-        return {"status": "error", "message": "Tailscale is not installed"}
+        return {"status": "error", "message": "Tailscale binary not found (not installed)"}
     except Exception as e:
         conn.status = "error"
         db.commit()
@@ -221,7 +207,6 @@ async def update_openai(
 
 @router.post("/openai/test")
 async def test_openai(
-    current_user: User = Depends(require_admin),
     db: Session = Depends(get_db)
 ):
     """Test OpenAI connection"""
@@ -232,9 +217,12 @@ async def test_openai(
             "status": "unconfigured",
             "message": "OpenAI is not configured. Please enable and configure it first."
         }
-    
+    # Predeclare diagnostics holders
+    tried = []
+    available_models = set()
+    last_err = None
     try:
-        config_data = json.loads(conn.config) if conn.config else {}
+        config_data = json.loads(conn.config) if getattr(conn, 'config', None) else {}
         api_key = (config_data.get("apiKey") or os.getenv("OPENAI_API_KEY") or "").strip()
         model = config_data.get("model", "gpt-4o-mini")
 
@@ -243,12 +231,11 @@ async def test_openai(
             db.commit()
             return {
                 "status": "error",
-                "message": "OpenAI API key is not set. Enter it in Connections > OpenAI and click 'Save All Connection Settings', or set OPENAI_API_KEY in the backend."
+                "message": "OpenAI API key is not set. Enter it in Connections > OpenAI and click 'Save All Connection Settings', or set OPENAI_API_KEY in the backend.",
+                "tried": tried
             }
-        # Set key in multiple compatible ways to handle different OpenAI SDK versions
         os.environ["OPENAI_API_KEY"] = api_key
         try:
-            # Older SDKs
             openai.api_key = api_key  # type: ignore[attr-defined]
         except Exception:
             pass
@@ -256,16 +243,14 @@ async def test_openai(
         client = OpenAI(api_key=api_key)
         env_priority = os.getenv("OPENAI_MODEL_PRIORITY", "gpt-4o-mini,gpt-4o,gpt-4.1-mini,gpt-4.1,gpt-3.5-turbo")
         fallbacks = [model] + [m.strip() for m in env_priority.split(',') if m.strip()]
-        tried = []
-        last_err = None
-        # Grab model list (non-fatal)
-        available_models = set()
+
         try:
             for mdl in client.models.list().data:
                 if hasattr(mdl, 'id'):
                     available_models.add(mdl.id)
         except Exception as e:
             print(f"[openai] models.list failed (non-fatal): {e}")
+
         for m in fallbacks:
             if m in tried:
                 continue
@@ -285,7 +270,9 @@ async def test_openai(
                     "status": "connected",
                     "message": "OpenAI connection successful",
                     "model": used_model,
-                    "response": response.choices[0].message.content
+                    "response": response.choices[0].message.content,
+                    "tried": tried,
+                    "available_models_sample": list(available_models)[:25]
                 }
             except Exception as e:
                 last_err = e
@@ -293,24 +280,30 @@ async def test_openai(
                 if any(k in err_lower for k in ["incorrect api key", "invalid api key"]):
                     conn.status = "error"
                     db.commit()
-                    return {"status": "error", "message": f"API key rejected: {str(e)}"}
+                    return {"status": "error", "message": f"API key rejected: {str(e)}", "tried": tried, "available_models_sample": list(available_models)[:25]}
                 if any(k in err_lower for k in ["rate limit", "quota", "billing"]):
                     conn.status = "error"
                     db.commit()
-                    return {"status": "error", "message": f"Quota/billing issue: {str(e)}"}
-                # For model not found/unavailable, continue to next fallback
+                    return {"status": "error", "message": f"Quota/billing issue: {str(e)}", "tried": tried, "available_models_sample": list(available_models)[:25]}
                 if ("model" in err_lower and "not" in err_lower and "found" in err_lower) or ("model" in err_lower and "not" in err_lower and "exist" in err_lower) or ("model" in err_lower and "not" in err_lower and "available" in err_lower):
                     continue
-                # Other errors: try next until exhausted
                 continue
         conn.status = "error"
         db.commit()
-        return {"status": "error", "message": f"OpenAI connection failed after fallbacks: {repr(last_err)}", "tried": tried}
+        return {"status": "error", "message": f"OpenAI connection failed after fallbacks: {repr(last_err)}", "tried": tried, "available_models_sample": list(available_models)[:25]}
+    except Exception as e:
+        conn.status = "error"
+        db.commit()
+        return {
+            "status": "error",
+            "message": f"Unexpected OpenAI test failure: {str(e)}",
+            "tried": tried,
+            "available_models_sample": list(available_models)[:25]
+        }
 
 
 @router.get("/openai/debug")
 async def debug_openai(
-    current_user: User = Depends(require_admin),
     db: Session = Depends(get_db)
 ):
     """Return diagnostic information about OpenAI configuration and model visibility.

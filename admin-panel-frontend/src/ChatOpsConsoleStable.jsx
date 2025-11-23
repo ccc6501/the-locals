@@ -465,6 +465,7 @@ const ChatOpsConsoleStable = () => {
                             tailnetLoading={tailnetLoading}
                             tailnetError={tailnetError}
                             refreshTailnetStats={refreshTailnetStats}
+                            apiBase={API_BASE}
                         />
                     )}
                     {activeView === 'system' && <SystemPanel tailnetStats={tailnetStats} refreshTailnetStats={refreshTailnetStats} exitNodeChanging={tailnetLoading} setExitNodeChanging={setTailnetLoading} />}

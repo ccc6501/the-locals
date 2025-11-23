@@ -59,13 +59,14 @@ function Start-Backend {
     if ($Uvicorn) {
         Ok "Starting backend (uvicorn reload on port 8000)..."
         if ($DryRun) { return }
-    $backendOut = Join-Path $root 'backend.out.log'
-    $backendErr = Join-Path $root 'backend.err.log'
+        $backendOut = Join-Path $root 'backend.out.log'
+        $backendErr = Join-Path $root 'backend.err.log'
         if ($Silent) {
             $python = (Get-Command python).Source
             Start-Process -FilePath $python -ArgumentList "-m uvicorn main:app --host 0.0.0.0 --port 8000 --reload" -WorkingDirectory $backendPath -WindowStyle Hidden -RedirectStandardOutput $backendOut -RedirectStandardError $backendErr
-        } else {
-            Start-Process powershell -ArgumentList @('-NoExit','-Command', "cd '$backendPath'; python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload") -WindowStyle Normal
+        }
+        else {
+            Start-Process powershell -ArgumentList @('-NoExit', '-Command', "cd '$backendPath'; python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload") -WindowStyle Normal
         }
     }
     else {
@@ -74,16 +75,17 @@ function Start-Backend {
         if ($LogMaxBytes -gt 0) { $envCmd += "$env:TRAY_LOG_MAX_BYTES=$LogMaxBytes;" }
         Ok "Starting backend (tray runner)..."
         if ($DryRun) { return }
-    $backendOut = Join-Path $root 'backend.out.log'
-    $backendErr = Join-Path $root 'backend.err.log'
+        $backendOut = Join-Path $root 'backend.out.log'
+        $backendErr = Join-Path $root 'backend.err.log'
         if ($Silent) {
             $python = (Get-Command python).Source
             # apply env overrides in current session before spawn
             if ($Ports) { $env:BACKEND_PORTS = $Ports }
             if ($LogMaxBytes -gt 0) { $env:TRAY_LOG_MAX_BYTES = $LogMaxBytes }
             Start-Process -FilePath $python -ArgumentList "tray_runner.py" -WorkingDirectory $backendPath -WindowStyle Hidden -RedirectStandardOutput $backendOut -RedirectStandardError $backendErr
-        } else {
-            Start-Process powershell -ArgumentList @('-NoExit','-Command', "cd '$backendPath'; $envCmd python tray_runner.py") -WindowStyle Normal
+        }
+        else {
+            Start-Process powershell -ArgumentList @('-NoExit', '-Command', "cd '$backendPath'; $envCmd python tray_runner.py") -WindowStyle Normal
         }
     }
 }
@@ -109,9 +111,10 @@ function Start-Frontend {
     $frontendErr = Join-Path $root 'frontend.err.log'
     if ($Silent) {
         $npm = (Get-Command npm).Source
-    Start-Process -FilePath $npm -ArgumentList "run dev" -WorkingDirectory $frontendPath -WindowStyle Hidden -RedirectStandardOutput $frontendOut -RedirectStandardError $frontendErr
-    } else {
-        Start-Process powershell -ArgumentList @('-NoExit','-Command', "cd '$frontendPath'; npm run dev") -WindowStyle Normal
+        Start-Process -FilePath $npm -ArgumentList "run dev" -WorkingDirectory $frontendPath -WindowStyle Hidden -RedirectStandardOutput $frontendOut -RedirectStandardError $frontendErr
+    }
+    else {
+        Start-Process powershell -ArgumentList @('-NoExit', '-Command', "cd '$frontendPath'; npm run dev") -WindowStyle Normal
     }
 }
 
@@ -127,6 +130,7 @@ Warn "If tray runner chooses a different port (e.g. 8001), update frontend API b
 Write-Host ""
 if ($Silent) {
     Ok "Done. Silent mode enabled. Logs: backend.out.log/backend.err.log & frontend.out.log/frontend.err.log"
-} else {
+}
+else {
     Ok "Done. Monitor tray icon and PowerShell windows for logs."
 }

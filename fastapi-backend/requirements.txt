@@ -30,6 +30,8 @@ requests==2.31.0
 
 # System Monitoring
 psutil==5.9.8  # CPU, Memory, Disk monitoring
+pystray==0.19.5  # System tray icon for headless start
+Pillow==10.2.0   # Image generation for tray icon
 
 # WebSockets
 websockets==12.0

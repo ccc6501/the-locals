@@ -49,12 +49,27 @@ export function ConnectionsPanel({
         setOpenaiTestLoading(true);
         setOpenaiTestResult(null);
         try {
-            const resp = await fetch(`${apiBase || ''}/api/connections/openai/test`, {
+            const url = `${apiBase || ''}/api/connections/openai/test`;
+            const resp = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' }
             });
-            const data = await resp.json();
-            setOpenaiTestResult(data);
+            const ct = resp.headers.get('content-type') || '';
+            let rawText = '';
+            try { rawText = await resp.text(); } catch(_) {}
+            let parsed = null;
+            if (ct.includes('application/json') && rawText.trim().length) {
+                try { parsed = JSON.parse(rawText); } catch(e) {
+                    parsed = { status: 'parse-error', message: 'Could not parse JSON', raw: rawText.slice(0,500) };
+                }
+            } else if (rawText.trim().length) {
+                parsed = { status: resp.ok ? 'non-json' : 'error', message: 'Non-JSON response', raw: rawText.slice(0,500), code: resp.status };
+            } else {
+                parsed = { status: resp.ok ? 'empty-response' : 'error', message: 'Empty response body', code: resp.status };
+            }
+            // Attach meta
+            parsed._meta = { statusCode: resp.status, ok: resp.ok, url };
+            setOpenaiTestResult(parsed);
         } catch (e) {
             setOpenaiTestResult({ status: 'error', message: String(e) });
         } finally {
@@ -158,14 +173,20 @@ export function ConnectionsPanel({
                         {openaiTestResult && (
                             <div className="mt-2 text-[10px] rounded-lg p-2 bg-slate-900/70 border border-slate-800 text-slate-300 whitespace-pre-wrap">
                                 Status: {openaiTestResult.status || 'unknown'}
+                                {openaiTestResult._meta && <>
+                                    <br />HTTP {openaiTestResult._meta.statusCode} ({openaiTestResult._meta.ok ? 'ok' : 'error'})
+                                </>}
                                 {openaiTestResult.message && <>
                                     <br />{openaiTestResult.message}
                                 </>}
                                 {openaiTestResult.model && <>
                                     <br />Model: {openaiTestResult.model}
                                 </>}
-                                {openaiTestResult.tried && <>
+                                {openaiTestResult.tried && Array.isArray(openaiTestResult.tried) && <>
                                     <br />Tried: {openaiTestResult.tried.join(', ')}
+                                </>}
+                                {openaiTestResult.raw && <>
+                                    <br />Raw: {openaiTestResult.raw}
                                 </>}
                             </div>
                         )}

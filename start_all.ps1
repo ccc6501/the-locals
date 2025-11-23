@@ -60,9 +60,15 @@ function Start-Backend {
         Ok "Starting backend (uvicorn reload on port 8000)..."
         if ($DryRun) { return }
         $backendLog = Join-Path $root 'backend.log'
-        $style = $Silent ? 'Hidden' : 'Normal'
-        $noExit = $Silent ? '' : '-NoExit'
-        $redir = $Silent ? " *>& '$backendLog'" : ''
+        if ($Silent) {
+            $style = 'Hidden'
+            $noExit = ''
+            $redir = " *>& '$backendLog'"
+        } else {
+            $style = 'Normal'
+            $noExit = '-NoExit'
+            $redir = ''
+        }
         Start-Process powershell -ArgumentList @($noExit, '-Command', "cd '$backendPath'; python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload$redir") -WindowStyle $style
     }
     else {
@@ -72,9 +78,15 @@ function Start-Backend {
         Ok "Starting backend (tray runner)..."
         if ($DryRun) { return }
         $backendLog = Join-Path $root 'backend.log'
-        $style = $Silent ? 'Hidden' : 'Normal'
-        $noExit = $Silent ? '' : '-NoExit'
-        $redir = $Silent ? " *>& '$backendLog'" : ''
+        if ($Silent) {
+            $style = 'Hidden'
+            $noExit = ''
+            $redir = " *>& '$backendLog'"
+        } else {
+            $style = 'Normal'
+            $noExit = '-NoExit'
+            $redir = ''
+        }
         Start-Process powershell -ArgumentList @($noExit, '-Command', "cd '$backendPath'; $envCmd python tray_runner.py$redir") -WindowStyle $style
     }
 }
@@ -97,9 +109,15 @@ function Start-Frontend {
     Ok "Starting frontend (Vite dev server on port 5173)..."
     if ($DryRun) { return }
     $frontendLog = Join-Path $root 'frontend.log'
-    $style = $Silent ? 'Hidden' : 'Normal'
-    $noExit = $Silent ? '' : '-NoExit'
-    $redir = $Silent ? " *>& '$frontendLog'" : ''
+    if ($Silent) {
+        $style = 'Hidden'
+        $noExit = ''
+        $redir = " *>& '$frontendLog'"
+    } else {
+        $style = 'Normal'
+        $noExit = '-NoExit'
+        $redir = ''
+    }
     Start-Process powershell -ArgumentList @($noExit, '-Command', "cd '$frontendPath'; npm run dev$redir") -WindowStyle $style
 }
 

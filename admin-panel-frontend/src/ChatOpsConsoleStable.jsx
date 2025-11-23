@@ -168,8 +168,15 @@ const ChatOpsConsoleStable = () => {
                 throw new Error(`Unexpected non-JSON response (${contentType || 'unknown'}): ${text.slice(0, 120)}...`);
             }
             const data = await res.json();
-            setTailnetStats({ ...data, last_check: new Date().toLocaleTimeString() });
-            setTailnetStatus(data.status || 'online');
+            // Normalize status values from backend
+            const rawStatus = (data.status || '').toLowerCase();
+            const normalized = ['connected','online','ok'].includes(rawStatus)
+              ? 'online'
+              : ['disconnected','error','not_installed','timeout'].includes(rawStatus)
+                ? 'offline'
+                : 'pending';
+            setTailnetStats({ ...data, last_check: new Date().toLocaleTimeString(), normalized_status: normalized });
+            setTailnetStatus(normalized);
         } catch (err) {
             console.error(err);
             setTailnetStatus('offline');
@@ -201,7 +208,7 @@ const ChatOpsConsoleStable = () => {
     };
 
     const resolveToken = () => {
-        const candidates = ['chatops_token','auth_token','jwt','access_token'];
+        const candidates = ['chatops_token', 'auth_token', 'jwt', 'access_token'];
         for (const k of candidates) { const v = localStorage.getItem(k); if (v) return v; }
         return null;
     };
@@ -363,8 +370,8 @@ const ChatOpsConsoleStable = () => {
                                         <div className="h-2 rounded bg-slate-800 overflow-hidden"><div style={{ width: `${systemSummary?.disk || 0}%` }} className="h-full bg-emerald-500/70" /></div>
                                     </div>
                                     <div className="flex justify-between pt-1"><span className="text-slate-500">Users</span><span className="text-slate-400">{userCount ?? new Set(messages.filter(m => m.role === 'user').map(m => m.authorTag || 'U')).size}</span></div>
-                                    <div className="flex justify-between"><span className="text-slate-500">Net Sent</span><span className="text-slate-400">{systemSummary?.bytes_sent ? (systemSummary.bytes_sent/1048576).toFixed(1)+' MB' : '--'}</span></div>
-                                    <div className="flex justify-between"><span className="text-slate-500">Net Recv</span><span className="text-slate-400">{systemSummary?.bytes_recv ? (systemSummary.bytes_recv/1048576).toFixed(1)+' MB' : '--'}</span></div>
+                                    <div className="flex justify-between"><span className="text-slate-500">Net Sent</span><span className="text-slate-400">{systemSummary?.bytes_sent ? (systemSummary.bytes_sent / 1048576).toFixed(1) + ' MB' : '--'}</span></div>
+                                    <div className="flex justify-between"><span className="text-slate-500">Net Recv</span><span className="text-slate-400">{systemSummary?.bytes_recv ? (systemSummary.bytes_recv / 1048576).toFixed(1) + ' MB' : '--'}</span></div>
                                     <div className="flex justify-between"><span className="text-slate-500">AI Requests</span><span className="text-slate-400">{aiRequestCount}</span></div>
                                 </div>
                             </div>

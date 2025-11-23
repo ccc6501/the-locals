@@ -5,6 +5,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useChatPersistence } from './hooks/useChatPersistence';
 import { useProviderStatus } from './hooks/useProviderStatus';
 import { ErrorToasts } from './components/ErrorToasts';
+import ConnectionsPanel from './components/ConnectionsPanel';
 import {
     Bot,
     Menu,
@@ -192,7 +193,6 @@ const ChatOpsConsoleStable = () => {
         <div className="px-4 py-6 space-y-4">
             <h2 className="text-lg font-semibold flex items-center gap-2">
                 {view === 'dashboard' && <Home className="w-5 h-5" />}
-                {view === 'connections' && <Share2 className="w-5 h-5" />}
                 {view === 'cloud' && <Cloud className="w-5 h-5" />}
                 {view === 'stats' && <BarChart3 className="w-5 h-5" />}
                 {view === 'system' && <User className="w-5 h-5" />}
@@ -201,43 +201,6 @@ const ChatOpsConsoleStable = () => {
                 <span className="capitalize">{view}</span>
             </h2>
             <div className="text-sm text-slate-400">This is a restored placeholder for the <span className="font-semibold text-slate-200">{view}</span> view.</div>
-            {view === 'connections' && (
-                <div className="space-y-3 text-xs">
-                    <div>
-                        <span className="block text-slate-500 mb-1">Provider</span>
-                        <div className="flex gap-2">
-                            <button onClick={() => setProvider('openai')} className={`flex-1 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${provider === 'openai' ? 'bg-gradient-to-r from-purple-600 to-blue-600 text-white' : 'bg-slate-800/70 border border-slate-700 text-slate-300'}`}>OpenAI</button>
-                            <button onClick={() => setProvider('ollama')} className={`flex-1 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${provider === 'ollama' ? 'bg-gradient-to-r from-purple-600 to-blue-600 text-white' : 'bg-slate-800/70 border border-slate-700 text-slate-300'}`}>Ollama</button>
-                        </div>
-                    </div>
-                    {provider === 'openai' && (
-                        <div>
-                            <label className="block text-slate-500 mb-1">API Key</label>
-                            <div className="relative">
-                                <Key className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-2.5" />
-                                <input type="password" value={openaiKey} onChange={e => setOpenaiKey(e.target.value)} placeholder="sk-..." className="w-full bg-slate-900/80 border border-slate-700 rounded-lg px-8 py-2 text-xs focus:outline-none focus:border-violet-500/70" />
-                            </div>
-                            <label className="block text-slate-500 mt-3 mb-1">Model</label>
-                            <input type="text" value={openaiModel} onChange={e => setOpenaiModel(e.target.value)} className="w-full bg-slate-900/80 border border-slate-700 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-violet-500/70" />
-                        </div>
-                    )}
-                    {provider === 'ollama' && (
-                        <div>
-                            <label className="block text-slate-500 mb-1">Ollama URL</label>
-                            <input type="text" value={ollamaUrl} onChange={e => setOllamaUrl(e.target.value)} className="w-full bg-slate-900/80 border border-slate-700 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-violet-500/70" />
-                            <label className="block text-slate-500 mt-3 mb-1">Model</label>
-                            <input type="text" value={ollamaModel} onChange={e => setOllamaModel(e.target.value)} className="w-full bg-slate-900/80 border border-slate-700 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-violet-500/70" />
-                            <button onClick={refreshOllamaModels} className="mt-3 w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-slate-800/70 border border-slate-700 text-slate-200 text-xs hover:bg-slate-700/70">
-                                <RefreshCw className={`w-3.5 h-3.5 ${ollamaModelsLoading ? 'animate-spin' : ''}`} /> Refresh Models
-                            </button>
-                        </div>
-                    )}
-                    <div className="mt-4">
-                        <span className="block text-slate-500 mb-1">Temperature</span>
-                        <input type="range" min="0" max="1" step="0.01" value={temp} onChange={e => setTemp(parseFloat(e.target.value))} className="w-full h-1.5 rounded-full bg-slate-800 appearance-none cursor-pointer" />
-                    </div>
-                </div>
-            )}
         </div>
     );
 
@@ -318,7 +281,28 @@ const ChatOpsConsoleStable = () => {
 
             <main className="chat-app-main">
                 <div className="chat-scroll-area" ref={messagesContainerRef}>
-                    {activeView === 'chat' ? renderMessages() : <ViewPlaceholder view={activeView} />}
+                    {activeView === 'chat' && renderMessages()}
+                    {activeView === 'connections' && (
+                        <ConnectionsPanel
+                            provider={provider}
+                            setProvider={setProvider}
+                            openaiKey={openaiKey}
+                            setOpenaiKey={setOpenaiKey}
+                            openaiModel={openaiModel}
+                            setOpenaiModel={setOpenaiModel}
+                            ollamaUrl={ollamaUrl}
+                            setOllamaUrl={setOllamaUrl}
+                            ollamaModel={ollamaModel}
+                            setOllamaModel={setOllamaModel}
+                            ollamaModels={ollamaModels}
+                            ollamaModelsLoading={ollamaModelsLoading}
+                            refreshOllamaModels={refreshOllamaModels}
+                            temp={temp}
+                            setTemp={setTemp}
+                            providerMeta={providerMeta}
+                        />
+                    )}
+                    {activeView !== 'chat' && activeView !== 'connections' && <ViewPlaceholder view={activeView} />}
                 </div>
                 {activeView === 'chat' && (
                     <div className="chat-input-wrapper">

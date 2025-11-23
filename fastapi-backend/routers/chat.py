@@ -62,6 +62,7 @@ class ChatConfig(BaseModel):
     """Provider-specific configuration"""
     api_key: Optional[str] = None
     model: Optional[str] = None
+    ollama_model: Optional[str] = None  # Specific field for Ollama model selection
     base_url: Optional[str] = None
 
 
@@ -74,23 +75,50 @@ class SimpleChatRequest(BaseModel):
 
 
 class SimpleChatResponse(BaseModel):
-    """Simple chat response"""
-    reply: str
+    """Simple chat response with metadata"""
+    role: str = "assistant"
+    text: str
     provider: str
     model: str
+    temperature: float
+    authorTag: str = "TL"
+    createdAt: str
 
 
 @router.post("/chat", response_model=SimpleChatResponse)
 async def simple_chat(request: SimpleChatRequest):
     """
     Simple chat endpoint for ChatOps console.
-    No authentication required, supports OpenAI and Ollama.
+    No authentication required, supports OpenAI and Ollama with automatic fallback.
+    Returns exactly one assistant response per request.
     """
     
+    # Single-provider routing - exactly one provider per request
     if request.provider == "openai":
         return await _chat_openai_simple(request)
     elif request.provider == "ollama":
-        return await _chat_ollama_simple(request)
+        # Try Ollama first, fallback to OpenAI if it fails
+        try:
+            return await _chat_ollama_simple(request)
+        except HTTPException as e:
+            # If Ollama is unavailable (503) or model missing, fallback to OpenAI
+            if e.status_code in [503, 404]:
+                print(f"Ollama unavailable ({e.detail}), falling back to OpenAI")
+                # Create OpenAI request with fallback metadata
+                openai_request = SimpleChatRequest(
+                    message=request.message,
+                    provider="openai",
+                    temperature=request.temperature,
+                    config=request.config
+                )
+                response = await _chat_openai_simple(openai_request)
+                # Add fallback metadata
+                response.provider = "openai"
+                response.model = f"{response.model} (fallback)"
+                return response
+            else:
+                # Re-raise other errors
+                raise
     else:
         raise HTTPException(status_code=400, detail=f"Unknown provider: {request.provider}")
 
@@ -120,7 +148,7 @@ async def _chat_openai_simple(request: SimpleChatRequest) -> SimpleChatResponse:
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a helpful AI assistant for The Local - a Tailscale-powered home hub with AI capabilities. Be concise and helpful."
+                    "content": "You are The Local, a helpful AI assistant for a Tailscale-powered home hub. Be friendly, concise, and helpful. You can answer questions about the system, help manage the network, or just chat."
                 },
                 {
                     "role": "user",
@@ -131,23 +159,38 @@ async def _chat_openai_simple(request: SimpleChatRequest) -> SimpleChatResponse:
             max_tokens=1000
         )
         
-        reply_text = response.choices[0].message.content
+        reply_text = response.choices[0].message.content or "No response from OpenAI"
         
+        # Update AI status cache
+        update_ai_status("openai", "online")
+        
+        # Return with metadata - NO provider/model suffix in text
         return SimpleChatResponse(
-            reply=reply_text,
+            role="assistant",
+            text=reply_text,
             provider="openai",
-            model=model
+            model=model,
+            temperature=request.temperature,
+            authorTag="TL",
+            createdAt=datetime.utcnow().isoformat()
         )
     
     except Exception as e:
+        # Update AI status as offline
+        update_ai_status("openai", "offline")
         raise HTTPException(status_code=500, detail=f"OpenAI API error: {str(e)}")
 
 
 async def _chat_ollama_simple(request: SimpleChatRequest) -> SimpleChatResponse:
-    """Call Ollama API for simple chat"""
+    """Call Ollama API for simple chat with model selection"""
     
     base_url = (request.config.base_url if request.config else None) or "http://localhost:11434"
-    model = (request.config.model if request.config else None) or "llama3"
+    
+    # Use ollama_model if provided, otherwise fallback to model, then default
+    model = None
+    if request.config:
+        model = request.config.ollama_model or request.config.model
+    model = model or "llama3"
     
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
@@ -158,7 +201,7 @@ async def _chat_ollama_simple(request: SimpleChatRequest) -> SimpleChatResponse:
                     "messages": [
                         {
                             "role": "system",
-                            "content": "You are a helpful AI assistant for The Local - a Tailscale-powered home hub. Be concise and helpful."
+                            "content": "You are The Local, a helpful AI assistant for a Tailscale-powered home hub. Be friendly, concise, and helpful. You can answer questions about the system, help manage the network, or just chat."
                         },
                         {
                             "role": "user",
@@ -174,22 +217,39 @@ async def _chat_ollama_simple(request: SimpleChatRequest) -> SimpleChatResponse:
             response.raise_for_status()
             data = response.json()
             
-            reply_text = data["message"]["content"]
+            reply_text = data["message"]["content"] or "No response from Ollama"
             
+            # Update AI status cache
+            update_ai_status("ollama", "online")
+            
+            # Return with metadata - NO provider/model suffix in text
             return SimpleChatResponse(
-                reply=reply_text,
+                role="assistant",
+                text=reply_text,
                 provider="ollama",
-                model=model
+                model=model,
+                temperature=request.temperature,
+                authorTag="TL",
+                createdAt=datetime.utcnow().isoformat()
             )
     
     except httpx.ConnectError:
+        # Update AI status as offline
+        update_ai_status("ollama", "offline")
         raise HTTPException(
             status_code=503,
             detail=f"Cannot connect to Ollama at {base_url}. Make sure Ollama is running."
         )
     except httpx.HTTPStatusError as e:
+        # Update AI status as offline
+        update_ai_status("ollama", "offline")
+        # Model not found or other Ollama error
+        if e.response.status_code == 404:
+            raise HTTPException(status_code=404, detail=f"Ollama model '{model}' not found")
         raise HTTPException(status_code=e.response.status_code, detail=f"Ollama error: {e.response.text}")
     except Exception as e:
+        # Update AI status as offline
+        update_ai_status("ollama", "offline")
         raise HTTPException(status_code=500, detail=f"Ollama call failed: {str(e)}")
 
 
@@ -197,52 +257,56 @@ async def get_ai_response(message: str, thread_type: str, db: Session) -> str:
     """
     Get AI response from OpenAI or Ollama based on configuration
     """
+    import json
+    
     # Check OpenAI connection
     openai_conn = db.query(Connection).filter(Connection.service == "openai").first()
-    if openai_conn and openai_conn.enabled:
-        try:
-            import json
-            config = json.loads(openai_conn.config) if openai_conn.config else {}
-            api_key = config.get("apiKey") or os.getenv("OPENAI_API_KEY")
-            model = config.get("model", "gpt-4o-mini")
-            
-            client = openai.OpenAI(api_key=api_key)
-            response = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": "You are a helpful AI assistant. Be concise and professional."},
-                    {"role": "user", "content": message}
-                ],
-                max_tokens=500
-            )
-            return response.choices[0].message.content
-        except Exception as e:
-            print(f"OpenAI error: {e}")
+    if openai_conn is not None:
+        if getattr(openai_conn, 'enabled', False):
+            try:
+                config_str = getattr(openai_conn, 'config', None)
+                config = json.loads(config_str) if config_str else {}
+                api_key = config.get("apiKey") or os.getenv("OPENAI_API_KEY")
+                model = config.get("model", "gpt-4o-mini")
+                
+                client = openai.OpenAI(api_key=api_key)
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": "You are a helpful AI assistant. Be concise and professional."},
+                        {"role": "user", "content": message}
+                    ],
+                    max_tokens=500
+                )
+                return response.choices[0].message.content or "No response from AI"
+            except Exception as e:
+                print(f"OpenAI error: {e}")
     
     # Check Ollama connection
     ollama_conn = db.query(Connection).filter(Connection.service == "ollama").first()
-    if ollama_conn and ollama_conn.enabled:
-        try:
-            import json
-            config = json.loads(ollama_conn.config) if ollama_conn.config else {}
-            endpoint = config.get("endpoint", "http://localhost:11434")
-            model = config.get("model", "llama2")
-            
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    f"{endpoint}/api/generate",
-                    json={
-                        "model": model,
-                        "prompt": message,
-                        "stream": False
-                    },
-                    timeout=30.0
-                )
-                if response.status_code == 200:
-                    data = response.json()
-                    return data.get("response", "No response from Ollama")
-        except Exception as e:
-            print(f"Ollama error: {e}")
+    if ollama_conn is not None:
+        if getattr(ollama_conn, 'enabled', False):
+            try:
+                config_str = getattr(ollama_conn, 'config', None)
+                config = json.loads(config_str) if config_str else {}
+                endpoint = config.get("endpoint", "http://localhost:11434")
+                model = config.get("model", "llama2")
+                
+                async with httpx.AsyncClient() as client:
+                    response = await client.post(
+                        f"{endpoint}/api/generate",
+                        json={
+                            "model": model,
+                            "prompt": message,
+                            "stream": False
+                        },
+                        timeout=30.0
+                    )
+                    if response.status_code == 200:
+                        data = response.json()
+                        return data.get("response", "No response from Ollama")
+            except Exception as e:
+                print(f"Ollama error: {e}")
     
     # Default response if no AI is configured
     return "AI services are not configured. Please set up OpenAI or Ollama in the Connections tab."
@@ -368,17 +432,18 @@ async def send_message(
     db.add(user_message)
     
     # Update thread timestamp
-    thread.updated_at = datetime.utcnow()
+    setattr(thread, 'updated_at', datetime.utcnow())
     
     # Increment AI usage counter
-    current_user.ai_usage += 1
+    setattr(current_user, 'ai_usage', (current_user.ai_usage or 0) + 1)
     
     db.commit()
     db.refresh(user_message)
     
     # If it's an AI thread, get AI response
-    if thread.type == "ai":
-        ai_response_text = await get_ai_response(message_data.text, thread.type, db)
+    thread_type = getattr(thread, 'type', None)
+    if thread_type == "ai":
+        ai_response_text = await get_ai_response(message_data.text, thread_type, db)
         
         ai_message = Message(
             thread_id=thread_id,
@@ -410,7 +475,9 @@ async def delete_thread(
         )
     
     # Only allow users to delete their own threads (or admins can delete any)
-    if thread.user_id != current_user.id and current_user.role != "admin":
+    thread_user_id = getattr(thread, 'user_id', None)
+    user_role = getattr(current_user, 'role', None)
+    if thread_user_id != current_user.id and user_role != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You can only delete your own threads"
@@ -420,3 +487,86 @@ async def delete_thread(
     db.commit()
     
     return {"message": "Thread deleted successfully"}
+
+
+# Status HUD endpoint for frontend
+class StatusResponse(BaseModel):
+    """System status for HUD display"""
+    tailnet: str  # "online" | "offline" | "unknown"
+    ai: dict  # {"provider": str, "status": str}
+    rooms: dict  # {"total": int, "active": int}
+
+
+# Global cache for last AI status (simple in-memory cache)
+_last_ai_status = {"provider": "unknown", "status": "unknown"}
+
+
+@router.get("/status", response_model=StatusResponse)
+async def get_system_status():
+    """
+    Get system status for frontend HUD.
+    Returns Tailnet status, AI provider status, and room counts.
+    """
+    
+    # Tailnet status - try to ping localhost, assume online if backend is running
+    # TODO: Implement proper Tailnet health check
+    tailnet_status = "online"  # Simplified for now
+    
+    # AI provider status from cache (updated on each chat request)
+    ai_status = {
+        "provider": _last_ai_status["provider"],
+        "status": _last_ai_status["status"]
+    }
+    
+    # Rooms - hardcoded for now, can be extended later
+    rooms_status = {
+        "total": 1,
+        "active": 1
+    }
+    
+    return StatusResponse(
+        tailnet=tailnet_status,
+        ai=ai_status,
+        rooms=rooms_status
+    )
+
+
+def update_ai_status(provider: str, status: str):
+    """Update global AI status cache"""
+    global _last_ai_status
+    _last_ai_status = {"provider": provider, "status": status}
+
+
+# --- ChatOps health endpoint ---
+class ProviderHealthResponse(BaseModel):
+    providerStatuses: dict
+
+
+@router.get("/health")
+async def chat_health(ollama_url: str = "http://localhost:11434"):
+    """Lightweight health endpoint for ChatOps console.
+    Returns provider status codes without performing full chat calls.
+    openai: 'key-missing' | 'ok'
+    ollama: 'ok' | 'offline' | 'error'
+    """
+    # OpenAI status: just check key presence (avoid token billing on health)
+    openai_key = os.getenv("OPENAI_API_KEY")
+    openai_status = "key-missing" if not openai_key else "ok"
+
+    # Ollama status: attempt a quick version or tags request
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(f"{ollama_url}/api/version")
+            resp.raise_for_status()
+            ollama_status = "ok"
+    except httpx.ConnectError:
+        ollama_status = "offline"
+    except Exception:
+        ollama_status = "error"
+
+    return {
+        "providerStatuses": {
+            "openai": openai_status,
+            "ollama": ollama_status
+        }
+    }

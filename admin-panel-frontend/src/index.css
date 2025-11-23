@@ -6,8 +6,151 @@ html,
 body,
 #root {
   height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  /* lock outer scroll; only inner app regions scroll */
 }
 
 body {
   @apply bg-slate-950 text-slate-100 font-sans;
+}
+
+/* Root wrapper for the ChatOps app */
+.chat-app-root {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: radial-gradient(circle at top left, #101b3a 0, #050816 40%, #02010c 100%);
+}
+
+/* Header – fixed height at top */
+.chat-app-header {
+  flex: 0 0 auto;
+  /* Slightly increased padding for larger hit areas */
+  padding: 14px 18px 10px;
+  position: sticky;
+  top: 0;
+  z-index: 50;
+}
+
+/* Main area / flex column */
+.chat-app-main {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  /* required for proper child overflow */
+}
+
+/* Only this area scrolls for chat content */
+.chat-scroll-area {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 8px 12px 0;
+  min-height: 0;
+}
+
+/* Input bar wrapper pinned to bottom */
+.chat-input-wrapper {
+  flex: 0 0 auto;
+  /* Increased bottom padding & safe area allowance */
+  padding: 12px 16px calc(env(safe-area-inset-bottom) + 16px);
+}
+
+.chat-input-inner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(8, 17, 40, 0.9);
+  border-radius: 999px;
+  padding: 8px 10px 8px 14px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.40);
+}
+
+.chat-input-field {
+  flex: 1;
+  border: none;
+  outline: none;
+  resize: none;
+  background: transparent;
+  color: #f7f7ff;
+  font-size: 16px;
+  /* >=16px prevents iOS zoom */
+  line-height: 1.4;
+}
+
+.chat-input-field::placeholder {
+  color: rgba(228, 232, 255, 0.42);
+}
+
+.chat-send-button {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #34b3ff, #9066ff);
+  box-shadow: 0 8px 20px rgba(54, 146, 255, 0.5);
+  cursor: pointer;
+}
+
+.chat-send-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.chat-send-icon {
+  font-size: 18px;
+  transform: translateX(1px);
+}
+
+/* Basic bubble classes for normalized renderer (optional minimal styling) */
+.user-bubble,
+.assistant-bubble {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.assistant-bubble .bubble-text,
+.user-bubble .bubble-text {
+  white-space: pre-wrap;
+  line-height: 1.45;
+  font-size: 14px;
+}
+
+.bubble-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 600;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: #fff;
+}
+
+.assistant-bubble .bubble-avatar {
+  background: linear-gradient(135deg, #0ea5e9, #6366f1);
+}
+
+.bubble-content {
+  max-width: 70%;
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(71, 85, 105, 0.5);
+  padding: 10px 14px;
+  border-radius: 18px;
+  position: relative;
+}
+
+.user-bubble .bubble-content {
+  background: linear-gradient(135deg, #6366f1, #0ea5e9);
+  border: none;
+  color: #fff;
 }

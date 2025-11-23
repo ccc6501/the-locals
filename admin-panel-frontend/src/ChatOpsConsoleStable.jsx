@@ -6,6 +6,7 @@ import { useChatPersistence } from './hooks/useChatPersistence';
 import { useProviderStatus } from './hooks/useProviderStatus';
 import { ErrorToasts } from './components/ErrorToasts';
 import { ConnectionsPanel } from './components/ConnectionsPanel';
+import { DashboardPanel } from './components/DashboardPanel';
 import {
     Bot,
     Menu,
@@ -87,6 +88,8 @@ const ChatOpsConsoleStable = () => {
     const [tailnetStats, setTailnetStats] = useState(null);
     const [tailnetLoading, setTailnetLoading] = useState(false);
     const [tailnetError, setTailnetError] = useState(null);
+    const [systemSummary, setSystemSummary] = useState(null);
+    const [aiRequestCount, setAiRequestCount] = useState(() => parseInt(localStorage.getItem('theLocal.aiRequestCount') || '0', 10));
     const [ollamaStatus, setOllamaStatus] = useState(null);
     const [errors, setErrors] = useState([]); // toast errors
 
@@ -129,7 +132,11 @@ const ChatOpsConsoleStable = () => {
     useEffect(() => { const c = messagesContainerRef.current; if (c) c.scrollTop = c.scrollHeight; }, [messages]);
 
     // Initial status boot (models + tailnet fetch)
-    useEffect(() => { refreshOllamaModels(); refreshTailnetStats(); }, []);
+    useEffect(() => { refreshOllamaModels(); refreshTailnetStats(); refreshSystemSummary(); }, []);
+    useEffect(() => {
+        const interval = setInterval(() => { refreshTailnetStats(); refreshSystemSummary(); }, 30000);
+        return () => clearInterval(interval);
+    }, []);
 
     const refreshOllamaModels = async () => {
         setOllamaModelsLoading(true);
@@ -170,6 +177,17 @@ const ChatOpsConsoleStable = () => {
         }
     };
 
+    const refreshSystemSummary = async () => {
+        try {
+            const res = await fetch(`${API_BASE}/api/system/public/summary`);
+            if (!res.ok) throw new Error(`Sys summary ${res.status}`);
+            const data = await res.json();
+            if (!data.error) setSystemSummary(data);
+        } catch (e) {
+            console.warn('System summary fetch failed', e.message);
+        }
+    };
+
     const sendMessageToBackend = async (text) => {
         let effectiveProvider = provider;
         if (provider === 'openai' && !openaiKey) effectiveProvider = 'ollama';
@@ -194,6 +212,9 @@ const ChatOpsConsoleStable = () => {
             const assistantText = getDisplayText(reply);
             const assistantMsg = { id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`, role: 'assistant', authorTag: 'TL', text: assistantText, createdAt: new Date().toISOString() };
             setMessages(prev => [...prev, assistantMsg]);
+            setAiRequestCount(prev => {
+                const next = prev + 1; localStorage.setItem('theLocal.aiRequestCount', String(next)); return next;
+            });
             setLastChatOk(true);
         } catch (err) {
             console.error(err);
@@ -267,7 +288,7 @@ const ChatOpsConsoleStable = () => {
                         <span className="hidden md:inline font-mono text-[10px] px-1 py-0.5 rounded bg-slate-900/60 border border-slate-700 text-slate-300">{provider === 'openai' ? formatModel(openaiModel) : formatModel(ollamaModel)}</span>
                         <span className="uppercase tracking-wide text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-slate-900/50 text-slate-300">{providerMeta.label}</span>
                     </button>
-                    <div className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border text-[11px] font-medium transition-colors select-none ${tailnetStatus === 'online' ? 'bg-sky-500/10 border-sky-500/30 text-sky-300' : tailnetStatus === 'offline' ? 'bg-rose-500/10 border-rose-500/30 text-rose-300' : 'bg-slate-800/60 border-slate-700/60 text-slate-300'}`}>
+                    <div className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border text-[11px] font-medium transition-colors select-none ${tailnetStatus === 'online' ? 'bg-slate-800/70 border-slate-700 text-slate-300' : tailnetStatus === 'offline' ? 'bg-rose-500/10 border-rose-500/30 text-rose-300' : 'bg-slate-800/60 border-slate-700/60 text-slate-400'}`}>
                         <Wifi className="w-3.5 h-3.5" />
                         <span className="hidden sm:inline">Tailnet</span>
                         <span className="uppercase tracking-wide text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-slate-900/50">{tailnetStatus === 'online' ? 'OK' : tailnetStatus === 'offline' ? 'DOWN' : 'WAIT'}</span>
@@ -297,7 +318,24 @@ const ChatOpsConsoleStable = () => {
                                 </div>
                                 <div className="flex items-center gap-2 mt-1">
                                     <Cpu className="w-3.5 h-3.5 text-slate-500" />
-                                    <span>AI: <span className={`font-semibold ${lastChatOk ? 'text-emerald-400' : 'text-slate-500'}`}>{lastChatOk === true ? 'online' : lastChatOk === false ? 'issue' : 'idle'}</span></span>
+                                    <span>AI: <span className="font-semibold text-slate-400">{lastChatOk === true ? 'ok' : lastChatOk === false ? 'issue' : 'wait'}</span></span>
+                                </div>
+                                {/* Gauges */}
+                                <div className="mt-3 space-y-2 text-[10px]">
+                                    <div>
+                                        <div className="flex justify-between"><span className="text-slate-500">CPU</span><span className="text-slate-400">{systemSummary?.cpu ?? '--'}%</span></div>
+                                        <div className="h-2 rounded bg-slate-800 overflow-hidden"><div style={{width:`${systemSummary?.cpu||0}%`}} className="h-full bg-violet-500/70" /></div>
+                                    </div>
+                                    <div>
+                                        <div className="flex justify-between"><span className="text-slate-500">Mem</span><span className="text-slate-400">{systemSummary?.memory ?? '--'}%</span></div>
+                                        <div className="h-2 rounded bg-slate-800 overflow-hidden"><div style={{width:`${systemSummary?.memory||0}%`}} className="h-full bg-sky-500/70" /></div>
+                                    </div>
+                                    <div>
+                                        <div className="flex justify-between"><span className="text-slate-500">Disk</span><span className="text-slate-400">{systemSummary?.disk ?? '--'}%</span></div>
+                                        <div className="h-2 rounded bg-slate-800 overflow-hidden"><div style={{width:`${systemSummary?.disk||0}%`}} className="h-full bg-emerald-500/70" /></div>
+                                    </div>
+                                    <div className="flex justify-between pt-1"><span className="text-slate-500">Users (approx)</span><span className="text-slate-400">{new Set(messages.filter(m=>m.role==='user').map(m=>m.authorTag||'U')).size}</span></div>
+                                    <div className="flex justify-between"><span className="text-slate-500">AI Requests</span><span className="text-slate-400">{aiRequestCount}</span></div>
                                 </div>
                             </div>
                         </div>
@@ -323,6 +361,7 @@ const ChatOpsConsoleStable = () => {
             <main className="chat-app-main">
                 <div className="chat-scroll-area" ref={messagesContainerRef}>
                     {activeView === 'chat' && renderMessages()}
+                    {activeView === 'dashboard' && <DashboardPanel tailnetStats={tailnetStats} systemSummary={systemSummary} recentMessages={messages} />}
                     {activeView === 'connections' && (
                         <ConnectionsPanel
                             provider={provider}
@@ -351,7 +390,7 @@ const ChatOpsConsoleStable = () => {
                             refreshTailnetStats={refreshTailnetStats}
                         />
                     )}
-                    {activeView !== 'chat' && activeView !== 'connections' && <ViewPlaceholder view={activeView} />}
+                    {activeView !== 'chat' && activeView !== 'connections' && activeView !== 'dashboard' && <ViewPlaceholder view={activeView} />}
                 </div>
                 {activeView === 'chat' && (
                     <div className="chat-input-wrapper">

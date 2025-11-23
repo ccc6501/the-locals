@@ -93,6 +93,30 @@ async def get_tailscale_summary():
             "error": str(e)
         }
 
+@router.get("/public/summary")
+async def get_public_system_summary():
+    """Lightweight unauthenticated summary for UI gauges (no sensitive data)."""
+    try:
+        cpu_percent = psutil.cpu_percent(interval=0.2)
+        memory = psutil.virtual_memory()
+        disk = psutil.disk_usage('/')
+        # Network quick check
+        network_status = "Connected"
+        try:
+            import socket
+            socket.create_connection(("8.8.8.8", 53), timeout=1.5)
+        except Exception:
+            network_status = "Disconnected"
+        return {
+            "cpu": cpu_percent,
+            "memory": memory.percent,
+            "disk": disk.percent,
+            "uptime": get_uptime(),
+            "networkStatus": network_status,
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
 
 def get_uptime() -> str:
     """Get system uptime"""

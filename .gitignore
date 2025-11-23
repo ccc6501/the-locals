@@ -1,0 +1,25 @@
+# Node
+node_modules/
+*.log
+
+# Build output
+admin-panel-frontend/dist/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Env
+.env
+.env.*
+
+# IDE/editor
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Misc
+*.bak
+*.tmp

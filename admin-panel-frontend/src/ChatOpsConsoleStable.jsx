@@ -8,6 +8,7 @@ import { ErrorToasts } from './components/ErrorToasts';
 import { ConnectionsPanel } from './components/ConnectionsPanel';
 import { DashboardPanel } from './components/DashboardPanel';
 import { SystemPanel } from './components/SystemPanel';
+import { CloudPanel } from './components/CloudPanel';
 import {
     Bot,
     Menu,
@@ -469,7 +470,8 @@ const ChatOpsConsoleStable = () => {
                         />
                     )}
                     {activeView === 'system' && <SystemPanel tailnetStats={tailnetStats} refreshTailnetStats={refreshTailnetStats} exitNodeChanging={tailnetLoading} setExitNodeChanging={setTailnetLoading} />}
-                    {activeView !== 'chat' && activeView !== 'connections' && activeView !== 'dashboard' && activeView !== 'system' && <ViewPlaceholder view={activeView} />}
+                    {activeView === 'cloud' && <CloudPanel apiBase={API_BASE} />}
+                    {activeView !== 'chat' && activeView !== 'connections' && activeView !== 'dashboard' && activeView !== 'system' && activeView !== 'cloud' && <ViewPlaceholder view={activeView} />}
                 </div>
                 {activeView === 'chat' && (
                     <div className="chat-input-wrapper">

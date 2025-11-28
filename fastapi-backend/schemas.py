@@ -238,3 +238,164 @@ class NotificationResponse(BaseModel):
     from_user_id: Optional[int] = Field(alias="fromUserId", serialization_alias="fromUserId", default=None)
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+
+# ============================================
+# Multi-User Schemas
+# ============================================
+
+class UserProfileCreate(BaseModel):
+    """Create a new user profile"""
+    handle: str
+    display_name: str
+    initials: Optional[str] = None
+    color: Optional[str] = "#8b5cf6"
+    role: Optional[str] = "member"
+    email: Optional[EmailStr] = None
+    password: Optional[str] = None
+
+
+class UserProfileUpdate(BaseModel):
+    """Update user profile"""
+    display_name: Optional[str] = None
+    initials: Optional[str] = None
+    avatar_url: Optional[str] = None
+    color: Optional[str] = None
+    status: Optional[str] = None
+    preferences: Optional[dict] = None
+
+
+class UserProfileResponse(BaseModel):
+    """User profile response"""
+    id: int
+    handle: str
+    display_name: str
+    initials: Optional[str] = None
+    avatar_url: Optional[str] = None
+    color: str
+    role: str
+    is_bot: bool
+    status: str
+    last_active_at: Optional[datetime] = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class UserPermissionResponse(BaseModel):
+    """User permission"""
+    permission: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class UserPresenceResponse(BaseModel):
+    """User presence/online status"""
+    user_id: int
+    online: bool
+    last_active_at: Optional[datetime] = None
+    active_devices: int
+
+
+# ============================================
+# Room Schemas
+# ============================================
+
+class RoomAIConfig(BaseModel):
+    """AI configuration for a room"""
+    assistant_name: str = "The Local"
+    assistant_persona: str = "helpful AI assistant"
+    model: str = "gpt-4o-mini"
+    temperature: float = 0.7
+    safety_level: str = "standard"  # strict, standard, relaxed
+    allowed_tools: List[str] = []
+    disabled_tools: List[str] = []
+    system_prompt_override: Optional[str] = None
+    context_sources: List[str] = ["network_snapshot", "system_summary", "room_history"]
+
+
+class RoomCreate(BaseModel):
+    """Create a new room"""
+    slug: str
+    name: str
+    description: Optional[str] = None
+    type: str = "group"  # system, dm, group
+    icon: Optional[str] = None
+    color: str = "#8b5cf6"
+    ai_config: Optional[RoomAIConfig] = None
+    member_ids: Optional[List[int]] = []  # Initial members
+
+
+class RoomUpdate(BaseModel):
+    """Update room details"""
+    name: Optional[str] = None
+    description: Optional[str] = None
+    icon: Optional[str] = None
+    color: Optional[str] = None
+    ai_config: Optional[RoomAIConfig] = None
+
+
+class RoomMemberResponse(BaseModel):
+    """Room member details"""
+    user_id: int
+    handle: str
+    display_name: str
+    avatar_url: Optional[str] = None
+    color: str
+    role: str  # owner, admin, member
+    joined_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class RoomResponse(BaseModel):
+    """Room response"""
+    id: int
+    slug: str
+    name: str
+    description: Optional[str] = None
+    type: str
+    icon: Optional[str] = None
+    color: str
+    is_system: bool
+    ai_config: Optional[dict] = None
+    created_at: datetime
+    created_by: Optional[int] = None
+    member_count: Optional[int] = None
+    unread_count: Optional[int] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class RoomMessageCreate(BaseModel):
+    """Send a message to a room"""
+    content: str
+    metadata: Optional[dict] = None
+
+
+class RoomMessageResponse(BaseModel):
+    """Room message response"""
+    id: int
+    room_id: int
+    user_id: Optional[int] = None
+    sender_handle: Optional[str] = None
+    sender_name: Optional[str] = None
+    sender_avatar: Optional[str] = None
+    sender_color: Optional[str] = None
+    role: str  # user, assistant
+    text: str
+    metadata: Optional[dict] = None
+    timestamp: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class RoomMemberAdd(BaseModel):
+    """Add member to room"""
+    user_id: int
+    role: str = "member"
+
+
+class RoomMemberUpdate(BaseModel):
+    """Update room member role"""
+    role: str

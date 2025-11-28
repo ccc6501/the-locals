@@ -2,26 +2,44 @@
 Database models for the admin panel
 """
 
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Text, Float
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Text, Float, JSON
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from database import Base
 
 
 class User(Base):
-    """User model"""
+    """User model - represents a person (not a device)"""
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(100), nullable=False)
-    handle = Column(String(50), unique=True, nullable=False, index=True)
-    email = Column(String(100), unique=True, nullable=False, index=True)
-    hashed_password = Column(String(255), nullable=False)
-    role = Column(String(20), default="user")  # admin, moderator, user
-    status = Column(String(20), default="offline")  # online, offline, suspended
+    handle = Column(String(50), unique=True, nullable=False, index=True)  # @chance, @dad
+    display_name = Column(String(100), nullable=False)  # "Chance", "Dad"
+    name = Column(String(100), nullable=True)  # Legacy - kept for backward compat
+    email = Column(String(100), unique=True, nullable=True, index=True)  # Optional now
+    hashed_password = Column(String(255), nullable=True)  # Optional for local auth
+    
+    # Visual identity
+    initials = Column(String(5), nullable=True)  # "CC", "D"
+    avatar_url = Column(String(500), nullable=True)
+    color = Column(String(20), default="#8b5cf6")  # for chat bubbles
+    
+    # Role & permissions
+    role = Column(String(20), default="member")  # owner, admin, member, child, guest
+    is_bot = Column(Boolean, default=False)  # TRUE for "The Local" AI
+    
+    # Status & activity
+    status = Column(String(20), default="offline")  # online, offline, away
+    last_active_at = Column(DateTime, nullable=True)
+    
+    # Legacy fields
     devices = Column(Integer, default=0)
     ai_usage = Column(Integer, default=0)
     storage_used = Column(Float, default=0.0)
+    
+    # Preferences (JSON)
+    preferences = Column(JSON, nullable=True)
+    
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -29,24 +47,85 @@ class User(Base):
     threads = relationship("Thread", back_populates="user", cascade="all, delete-orphan")
     messages = relationship("Message", back_populates="user", cascade="all, delete-orphan")
     user_devices = relationship("Device", back_populates="user", cascade="all, delete-orphan")
+    permissions = relationship("UserPermission", back_populates="user", cascade="all, delete-orphan")
+    room_memberships = relationship("RoomMember", back_populates="user", cascade="all, delete-orphan")
+    created_rooms = relationship("Room", back_populates="creator", foreign_keys="Room.created_by")
 
 
 class Device(Base):
-    """Device tracking model"""
+    """Device tracking model - links devices to users"""
     __tablename__ = "devices"
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    device_id = Column(String(100), unique=True, index=True)  # Tailscale device ID
     device_name = Column(String(100))  # e.g., "Chrome on Windows", "Safari on iPad"
     device_type = Column(String(50))  # desktop, mobile, tablet
+    hostname = Column(String(100))  # Tailscale hostname
     ip_address = Column(String(50))
     user_agent = Column(String(500))
+    is_primary = Column(Boolean, default=False)
     last_active = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     first_seen = Column(DateTime, default=datetime.utcnow)
     is_active = Column(Boolean, default=True)
     
     # Relationships
     user = relationship("User", back_populates="user_devices")
+
+
+class UserPermission(Base):
+    """User permissions - what actions a user can perform"""
+    __tablename__ = "user_permissions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    permission = Column(String(100), nullable=False)  # e.g., 'manage_rooms', 'restart_services'
+    
+    # Relationships
+    user = relationship("User", back_populates="permissions")
+
+
+class Room(Base):
+    """Room model - conversation spaces with AI config"""
+    __tablename__ = "rooms"
+
+    id = Column(Integer, primary_key=True, index=True)
+    slug = Column(String(100), unique=True, nullable=False, index=True)  # 'general', 'network'
+    name = Column(String(100), nullable=False)  # "General", "Network Ops"
+    description = Column(Text, nullable=True)
+    type = Column(String(20), default="group")  # system, dm, group
+    icon = Column(String(50), nullable=True)  # emoji or icon name
+    color = Column(String(20), default="#8b5cf6")
+    is_system = Column(Boolean, default=False)  # can't be deleted
+    
+    # AI Configuration (JSON)
+    ai_config = Column(JSON, nullable=True)
+    
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    
+    # Relationships
+    creator = relationship("User", back_populates="created_rooms", foreign_keys=[created_by])
+    members = relationship("RoomMember", back_populates="room", cascade="all, delete-orphan")
+    room_messages = relationship("Message", back_populates="room", cascade="all, delete-orphan")
+
+
+class RoomMember(Base):
+    """Room membership - which users have access to which rooms"""
+    __tablename__ = "room_members"
+
+    id = Column(Integer, primary_key=True, index=True)
+    room_id = Column(Integer, ForeignKey("rooms.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    role = Column(String(20), default="member")  # owner, admin, member
+    joined_at = Column(DateTime, default=datetime.utcnow)
+    last_read_at = Column(DateTime, nullable=True)  # for unread counts
+    notifications = Column(String(20), default="all")  # all, mentions, none
+    
+    # Relationships
+    room = relationship("Room", back_populates="members")
+    user = relationship("User", back_populates="room_memberships")
 
 
 class Invite(Base):
@@ -80,17 +159,21 @@ class Thread(Base):
 
 
 class Message(Base):
-    """Chat message model"""
+    """Chat message model - belongs to a room and user"""
     __tablename__ = "messages"
 
     id = Column(Integer, primary_key=True, index=True)
-    thread_id = Column(Integer, ForeignKey("threads.id"), nullable=False)
+    room_id = Column(Integer, ForeignKey("rooms.id"), nullable=True)  # New: room context
+    thread_id = Column(Integer, ForeignKey("threads.id"), nullable=True)  # Legacy - kept for migration
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-    sender = Column(String(100), nullable=False)
+    sender = Column(String(100), nullable=False)  # Legacy field
     text = Column(Text, nullable=False)
+    role = Column(String(20), default="user")  # user, assistant
+    metadata = Column(JSON, nullable=True)  # attachments, reactions, etc.
     timestamp = Column(DateTime, default=datetime.utcnow)
 
     # Relationships
+    room = relationship("Room", back_populates="room_messages")
     thread = relationship("Thread", back_populates="messages")
     user = relationship("User", back_populates="messages")
 

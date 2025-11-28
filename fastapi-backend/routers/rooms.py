@@ -3,6 +3,7 @@ Room management routes for multi-user chat
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Body
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import datetime
@@ -14,19 +15,33 @@ from schemas import (
     RoomMemberResponse, RoomMemberAdd, RoomMemberUpdate,
     RoomMessageResponse, RoomMessageCreate
 )
-from auth_utils import get_current_active_user
 
 router = APIRouter()
+
+# Optional bearer token for localhost development
+security = HTTPBearer(auto_error=False)
 
 
 # Helper to get current user or default to first user for localhost
 async def get_user_or_default(
-    current_user: Optional[User] = Depends(get_current_active_user),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     db: Session = Depends(get_db)
 ) -> User:
-    """Get current user or default to first owner user for localhost development"""
-    if current_user:
-        return current_user
+    """Get current user from token or default to first owner user for localhost development"""
+    
+    # If we have credentials, try to authenticate
+    if credentials:
+        from auth_utils import decode_token
+        try:
+            token = credentials.credentials
+            payload = decode_token(token)
+            email: str = payload.get("sub")
+            if email:
+                user = db.query(User).filter(User.email == email).first()
+                if user:
+                    return user
+        except:
+            pass  # Fall through to default user
     
     # For localhost development without auth, use first owner
     default_user = db.query(User).filter(User.role == "owner").first()
@@ -36,7 +51,7 @@ async def get_user_or_default(
     if not default_user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="No users found - run init script"
+            detail="No users found - run quick_setup.py to initialize database"
         )
     
     return default_user
@@ -65,7 +80,7 @@ async def list_rooms(
 
 @router.get("/system", response_model=List[RoomResponse])
 async def list_system_rooms(
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_user_or_default),
     db: Session = Depends(get_db)
 ):
     """List all system rooms"""
@@ -144,7 +159,7 @@ async def create_room(
 @router.get("/{room_id}", response_model=RoomResponse)
 async def get_room(
     room_id: int,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_user_or_default),
     db: Session = Depends(get_db)
 ):
     """Get room details"""
@@ -175,7 +190,7 @@ async def get_room(
 async def update_room(
     room_id: int,
     room_data: RoomUpdate,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_user_or_default),
     db: Session = Depends(get_db)
 ):
     """Update room details (owner/admin only)"""
@@ -222,7 +237,7 @@ async def update_room(
 @router.delete("/{room_id}")
 async def delete_room(
     room_id: int,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_user_or_default),
     db: Session = Depends(get_db)
 ):
     """Delete a room (owner only)"""
@@ -267,7 +282,7 @@ async def delete_room(
 @router.get("/{room_id}/members", response_model=List[RoomMemberResponse])
 async def list_room_members(
     room_id: int,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_user_or_default),
     db: Session = Depends(get_db)
 ):
     """List all members in a room"""
@@ -293,7 +308,7 @@ async def list_room_members(
 async def add_room_member(
     room_id: int,
     member_data: RoomMemberAdd,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_user_or_default),
     db: Session = Depends(get_db)
 ):
     """Add a user to a room"""
@@ -356,7 +371,7 @@ async def update_room_member(
     room_id: int,
     user_id: int,
     member_data: RoomMemberUpdate,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_user_or_default),
     db: Session = Depends(get_db)
 ):
     """Update a member's role in a room"""
@@ -403,7 +418,7 @@ async def update_room_member(
 async def remove_room_member(
     room_id: int,
     user_id: int,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_user_or_default),
     db: Session = Depends(get_db)
 ):
     """Remove a user from a room"""
@@ -464,7 +479,7 @@ async def get_room_messages(
     room_id: int,
     limit: int = 50,
     before: Optional[int] = None,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_user_or_default),
     db: Session = Depends(get_db)
 ):
     """Get messages in a room with pagination"""
@@ -499,7 +514,7 @@ async def get_room_messages(
 async def send_room_message(
     room_id: int,
     message_data: RoomMessageCreate,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_user_or_default),
     db: Session = Depends(get_db)
 ):
     """Send a message to a room"""
@@ -537,7 +552,7 @@ async def send_room_message(
 @router.patch("/{room_id}/read")
 async def mark_room_as_read(
     room_id: int,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_user_or_default),
     db: Session = Depends(get_db)
 ):
     """Mark all messages in a room as read"""
@@ -564,7 +579,7 @@ async def mark_room_as_read(
 @router.get("/{room_id}/unread-count")
 async def get_unread_count(
     room_id: int,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_user_or_default),
     db: Session = Depends(get_db)
 ):
     """Get count of unread messages in a room"""

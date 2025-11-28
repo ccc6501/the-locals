@@ -9,6 +9,10 @@ import { ConnectionsPanel } from './components/ConnectionsPanel';
 import { DashboardPanel } from './components/DashboardPanel';
 import { SystemPanel } from './components/SystemPanel';
 import { CloudPanel } from './components/CloudPanel';
+import { UserAvatar } from './components/UserAvatar';
+import { RoomList } from './components/RoomList';
+import { RoomHeader } from './components/RoomHeader';
+import { UserProfileSwitcher } from './components/UserProfileSwitcher';
 import {
     Bot,
     Menu,
@@ -148,6 +152,20 @@ const ChatOpsConsoleStable = () => {
     const [cloudPath, setCloudPath] = useState(() => localStorage.getItem('theLocal.cloudPath') || '/mnt/data');
     const [cloudEndpoint, setCloudEndpoint] = useState(() => localStorage.getItem('theLocal.cloudEndpoint') || '');
 
+    // Multi-user & room state
+    const [currentUser, setCurrentUser] = useState(() => {
+        const stored = localStorage.getItem('theLocal.currentUser');
+        return stored ? JSON.parse(stored) : null;
+    });
+    const [users, setUsers] = useState([]);
+    const [rooms, setRooms] = useState([]);
+    const [currentRoom, setCurrentRoom] = useState(() => {
+        const stored = localStorage.getItem('theLocal.currentRoom');
+        return stored ? JSON.parse(stored) : null;
+    });
+    const [unreadCounts, setUnreadCounts] = useState({});
+    const [roomsLoading, setRoomsLoading] = useState(false);
+
     // Helper to push error to toast list
     const pushError = (msg) => {
         setErrors(prev => [{ id: `e-${Date.now()}`, message: msg }, ...prev.slice(0, 9)]);
@@ -161,6 +179,12 @@ const ChatOpsConsoleStable = () => {
     useEffect(() => localStorage.setItem('theLocal.ollamaModel', ollamaModel), [ollamaModel]);
     useEffect(() => localStorage.setItem('theLocal.cloudPath', cloudPath), [cloudPath]);
     useEffect(() => localStorage.setItem('theLocal.cloudEndpoint', cloudEndpoint), [cloudEndpoint]);
+    useEffect(() => {
+        if (currentUser) localStorage.setItem('theLocal.currentUser', JSON.stringify(currentUser));
+    }, [currentUser]);
+    useEffect(() => {
+        if (currentRoom) localStorage.setItem('theLocal.currentRoom', JSON.stringify(currentRoom));
+    }, [currentRoom]);
 
     // Scroll
     useEffect(() => { const c = messagesContainerRef.current; if (c) c.scrollTop = c.scrollHeight; }, [messages]);
@@ -175,12 +199,27 @@ const ChatOpsConsoleStable = () => {
             refreshSystemSummary();
             refreshUserCount();
             refreshLogs();
+            refreshUsers();
+            refreshRooms();
         })();
     }, []);
     useEffect(() => {
-        const interval = setInterval(() => { refreshTailnetStats(); refreshSystemSummary(); refreshUserCount(); refreshLogs(); }, 30000);
+        const interval = setInterval(() => { 
+            refreshTailnetStats(); 
+            refreshSystemSummary(); 
+            refreshUserCount(); 
+            refreshLogs();
+            refreshUnreadCounts();
+        }, 30000);
         return () => clearInterval(interval);
-    }, []);
+    }, [currentUser, rooms]);
+
+    // Refresh rooms when user changes
+    useEffect(() => {
+        if (currentUser) {
+            refreshRooms();
+        }
+    }, [currentUser]);
 
     const refreshOllamaModels = async () => {
         setOllamaModelsLoading(true);
@@ -248,6 +287,81 @@ const ChatOpsConsoleStable = () => {
         } catch (e) { /* ignore */ }
     };
 
+    const refreshRooms = async () => {
+        if (!currentUser) return;
+        setRoomsLoading(true);
+        try {
+            const token = resolveToken();
+            const res = await fetch(`${API_BASE}/api/rooms`, {
+                headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+            });
+            if (!res.ok) throw new Error(`Rooms ${res.status}`);
+            const data = await res.json();
+            setRooms(data || []);
+            
+            // Auto-select first room if none selected
+            if (!currentRoom && data.length > 0) {
+                setCurrentRoom(data[0]);
+            }
+        } catch (e) {
+            console.error('Failed to load rooms:', e);
+            pushError(`Failed to load rooms: ${e.message}`);
+        } finally {
+            setRoomsLoading(false);
+        }
+    };
+
+    const refreshUsers = async () => {
+        try {
+            const token = resolveToken();
+            const res = await fetch(`${API_BASE}/api/users`, {
+                headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+            });
+            if (!res.ok) throw new Error(`Users ${res.status}`);
+            const data = await res.json();
+            setUsers(data || []);
+            
+            // Auto-select current user if not set
+            if (!currentUser && data.length > 0) {
+                // Find owner or first user
+                const owner = data.find(u => u.role === 'owner') || data[0];
+                setCurrentUser(owner);
+            }
+        } catch (e) {
+            console.error('Failed to load users:', e);
+        }
+    };
+
+    const refreshUnreadCounts = async () => {
+        if (!currentUser || !rooms.length) return;
+        
+        try {
+            const token = resolveToken();
+            const counts = {};
+            
+            // Fetch unread count for each room
+            await Promise.all(
+                rooms.map(async (room) => {
+                    try {
+                        const res = await fetch(`${API_BASE}/api/rooms/${room.id}/unread-count`, {
+                            headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+                        });
+                        if (res.ok) {
+                            const data = await res.json();
+                            counts[room.id] = data.unread_count || 0;
+                        }
+                    } catch (e) {
+                        console.warn(`Failed to get unread count for room ${room.id}:`, e);
+                    }
+                })
+            );
+            
+            setUnreadCounts(counts);
+        } catch (e) {
+            console.error('Failed to refresh unread counts:', e);
+        }
+    };
+
     const resolveToken = () => {
         const candidates = ['chatops_token', 'auth_token', 'jwt', 'access_token'];
         for (const k of candidates) { const v = localStorage.getItem(k); if (v) return v; }
@@ -269,8 +383,24 @@ const ChatOpsConsoleStable = () => {
         if (provider === 'openai' && !openaiKey) effectiveProvider = 'ollama';
         let selectedModel = effectiveProvider === 'openai' ? openaiModel : ollamaModel;
         if (effectiveProvider === 'ollama' && (!selectedModel || !ollamaModels.includes(selectedModel))) { effectiveProvider = 'openai'; selectedModel = openaiModel; }
-        const payload = { message: text, provider: effectiveProvider, temperature: temp, config: effectiveProvider === 'openai' ? { api_key: openaiKey || undefined, model: selectedModel } : { base_url: ollamaUrl, model: selectedModel } };
-        const res = await fetch(`${API_BASE}/api/chat/chat`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        
+        // Build payload with room context
+        const payload = { 
+            message: text, 
+            provider: effectiveProvider, 
+            temperature: temp, 
+            config: effectiveProvider === 'openai' 
+                ? { api_key: openaiKey || undefined, model: selectedModel } 
+                : { base_url: ollamaUrl, model: selectedModel },
+            room_id: currentRoom?.id,
+            user_id: currentUser?.id
+        };
+        
+        const res = await fetch(`${API_BASE}/api/chat/chat`, { 
+            method: 'POST', 
+            headers: { 'Content-Type': 'application/json' }, 
+            body: JSON.stringify(payload) 
+        });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
     };
@@ -279,19 +409,25 @@ const ChatOpsConsoleStable = () => {
         const text = draftMessage.trim();
         if (!text || isSending) return;
         setIsSending(true);
-        const userMsg = { id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`, role: 'user', authorTag: 'CC', text, createdAt: new Date().toISOString() };
+        const userMsg = { id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`, role: 'user', authorTag: currentUser?.initials || 'CC', text, createdAt: new Date().toISOString() };
         setMessages(prev => [...prev, userMsg]);
         setDraftMessage('');
         if (inputRef.current) setTimeout(() => inputRef.current && inputRef.current.blur(), 0);
         try {
             const reply = await sendMessageToBackend(text);
             const assistantText = getDisplayText(reply);
-            const assistantMsg = { id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`, role: 'assistant', authorTag: 'TL', text: assistantText, createdAt: new Date().toISOString() };
+            const assistantTag = reply.authorTag || 'TL';
+            const assistantMsg = { id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`, role: 'assistant', authorTag: assistantTag, text: assistantText, createdAt: new Date().toISOString() };
             setMessages(prev => [...prev, assistantMsg]);
             setAiRequestCount(prev => {
                 const next = prev + 1; localStorage.setItem('theLocal.aiRequestCount', String(next)); return next;
             });
             setLastChatOk(true);
+            
+            // Mark room as read after sending
+            if (currentRoom?.id && currentUser?.id) {
+                markRoomAsRead(currentRoom.id);
+            }
         } catch (err) {
             console.error(err);
             setLastChatOk(false);
@@ -299,6 +435,34 @@ const ChatOpsConsoleStable = () => {
             setErrors(prev => [{ id: `e-${Date.now()}`, message: msg }, ...prev.slice(0, 9)]); // keep last 10
             setMessages(prev => [...prev, { id: `err-${Date.now()}`, role: 'assistant', authorTag: 'TL', text: '⚠️ Failed: ' + msg, createdAt: new Date().toISOString() }]);
         } finally { setIsSending(false); }
+    };
+
+    const handleRoomSelect = (room) => {
+        setCurrentRoom(room);
+        // Clear messages and load room history (for now just clear)
+        setMessages([]);
+        // Mark as read
+        markRoomAsRead(room.id);
+    };
+
+    const handleUserSelect = (user) => {
+        setCurrentUser(user);
+        // Rooms will reload via useEffect
+    };
+
+    const markRoomAsRead = async (roomId) => {
+        if (!currentUser) return;
+        try {
+            const token = resolveToken();
+            await fetch(`${API_BASE}/api/rooms/${roomId}/read`, {
+                method: 'PATCH',
+                headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+            });
+            // Update unread count locally
+            setUnreadCounts(prev => ({ ...prev, [roomId]: 0 }));
+        } catch (e) {
+            console.warn('Failed to mark room as read:', e);
+        }
     };
 
     const handleKeyDown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } };
@@ -353,6 +517,15 @@ const ChatOpsConsoleStable = () => {
                     </div>
                 </div>
                 <div className="flex items-center gap-3">
+                    {/* User Profile Switcher */}
+                    {currentUser && users.length > 0 && (
+                        <UserProfileSwitcher
+                            users={users}
+                            currentUser={currentUser}
+                            onUserSelect={handleUserSelect}
+                        />
+                    )}
+                    
                     <button type="button" onClick={() => setProvider(prev => prev === 'openai' ? 'ollama' : 'openai')} className="flex items-center gap-1.5 px-3 py-2 rounded-lg border text-[11px] font-medium transition-colors active:scale-[0.97] bg-slate-800/60 border-slate-700/60 hover:bg-slate-700/60" aria-label="Toggle AI provider">
                         <Cpu className="w-3.5 h-3.5 text-slate-300" />
                         {/* Key presence dot for OpenAI */}
@@ -436,66 +609,90 @@ const ChatOpsConsoleStable = () => {
                 </>
             )}
 
-            <main className="chat-app-main">
-                <div className="chat-scroll-area" ref={messagesContainerRef}>
-                    {activeView === 'chat' && renderMessages()}
-                    {activeView === 'dashboard' && <DashboardPanel recentMessages={messages} logs={logs} />}
-                    {activeView === 'connections' && (
-                        <ConnectionsPanel
-                            provider={provider}
-                            setProvider={setProvider}
-                            openaiKey={openaiKey}
-                            setOpenaiKey={setOpenaiKey}
-                            openaiModel={openaiModel}
-                            setOpenaiModel={setOpenaiModel}
-                            ollamaUrl={ollamaUrl}
-                            setOllamaUrl={setOllamaUrl}
-                            ollamaModel={ollamaModel}
-                            setOllamaModel={setOllamaModel}
-                            ollamaModels={ollamaModels}
-                            ollamaModelsLoading={ollamaModelsLoading}
-                            refreshOllamaModels={refreshOllamaModels}
-                            temp={temp}
-                            setTemp={setTemp}
-                            providerMeta={providerMeta}
-                            cloudPath={cloudPath}
-                            setCloudPath={setCloudPath}
-                            cloudEndpoint={cloudEndpoint}
-                            setCloudEndpoint={setCloudEndpoint}
-                            tailnetStats={tailnetStats}
-                            tailnetLoading={tailnetLoading}
-                            tailnetError={tailnetError}
-                            refreshTailnetStats={refreshTailnetStats}
-                            apiBase={API_BASE}
+            <main className="chat-app-main flex">
+                {/* Room List Sidebar - Only show in chat view */}
+                {activeView === 'chat' && rooms.length > 0 && (
+                    <RoomList
+                        rooms={rooms}
+                        currentRoomId={currentRoom?.id}
+                        onRoomSelect={handleRoomSelect}
+                        unreadCounts={unreadCounts}
+                    />
+                )}
+                
+                {/* Main Content Area */}
+                <div className="flex-1 flex flex-col">
+                    {/* Room Header - Only show in chat view when room selected */}
+                    {activeView === 'chat' && currentRoom && (
+                        <RoomHeader
+                            room={currentRoom}
+                            aiConfig={currentRoom.ai_config ? JSON.parse(currentRoom.ai_config) : {}}
                         />
                     )}
-                    {activeView === 'system' && <SystemPanel tailnetStats={tailnetStats} refreshTailnetStats={refreshTailnetStats} exitNodeChanging={tailnetLoading} setExitNodeChanging={setTailnetLoading} />}
-                    {activeView === 'cloud' && <CloudPanel apiBase={API_BASE} />}
-                    {activeView !== 'chat' && activeView !== 'connections' && activeView !== 'dashboard' && activeView !== 'system' && activeView !== 'cloud' && <ViewPlaceholder view={activeView} />}
-                </div>
-                {activeView === 'chat' && (
-                    <div className="chat-input-wrapper">
-                        <div className="chat-input-inner">
-                            <textarea className="chat-input-field" rows={1} placeholder="Message the room..." value={draftMessage} onChange={e => setDraftMessage(e.target.value)} onKeyDown={handleKeyDown} ref={inputRef} />
-                            <button className="chat-send-button" disabled={isSending || !draftMessage.trim()} onClick={handleSend} aria-label="Send message">
-                                <span className="chat-send-icon">➤</span>
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    if (!messages.length) return;
-                                    if (!window.confirm('Clear all chat history?')) return;
-                                    const welcome = { id: 'welcome', role: 'assistant', authorTag: 'TL', text: 'History cleared. Fresh start! Ask me anything.', createdAt: new Date().toISOString() };
-                                    setMessages([welcome]);
-                                    localStorage.removeItem('theLocal.chatMessages');
-                                    setErrors(prev => [{ id: `e-${Date.now()}`, message: 'Chat history cleared' }, ...prev]);
-                                }}
-                                className="ml-2 px-2 py-1 rounded-lg text-[10px] font-semibold bg-slate-800/70 border border-slate-700 text-slate-300 hover:bg-slate-700/70 active:scale-95"
-                            >Clear</button>
-                        </div>
-                        {/* Error toasts rendered globally */}
+                    
+                    {/* Messages/Content Area */}
+                    <div className="chat-scroll-area flex-1" ref={messagesContainerRef}>
+                        {activeView === 'chat' && renderMessages()}
+                        {activeView === 'dashboard' && <DashboardPanel recentMessages={messages} logs={logs} />}
+                        {activeView === 'connections' && (
+                            <ConnectionsPanel
+                                provider={provider}
+                                setProvider={setProvider}
+                                openaiKey={openaiKey}
+                                setOpenaiKey={setOpenaiKey}
+                                openaiModel={openaiModel}
+                                setOpenaiModel={setOpenaiModel}
+                                ollamaUrl={ollamaUrl}
+                                setOllamaUrl={setOllamaUrl}
+                                ollamaModel={ollamaModel}
+                                setOllamaModel={setOllamaModel}
+                                ollamaModels={ollamaModels}
+                                ollamaModelsLoading={ollamaModelsLoading}
+                                refreshOllamaModels={refreshOllamaModels}
+                                temp={temp}
+                                setTemp={setTemp}
+                                providerMeta={providerMeta}
+                                cloudPath={cloudPath}
+                                setCloudPath={setCloudPath}
+                                cloudEndpoint={cloudEndpoint}
+                                setCloudEndpoint={setCloudEndpoint}
+                                tailnetStats={tailnetStats}
+                                tailnetLoading={tailnetLoading}
+                                tailnetError={tailnetError}
+                                refreshTailnetStats={refreshTailnetStats}
+                                apiBase={API_BASE}
+                            />
+                        )}
+                        {activeView === 'system' && <SystemPanel tailnetStats={tailnetStats} refreshTailnetStats={refreshTailnetStats} exitNodeChanging={tailnetLoading} setExitNodeChanging={setTailnetLoading} />}
+                        {activeView === 'cloud' && <CloudPanel apiBase={API_BASE} />}
+                        {activeView !== 'chat' && activeView !== 'connections' && activeView !== 'dashboard' && activeView !== 'system' && activeView !== 'cloud' && <ViewPlaceholder view={activeView} />}
                     </div>
-                )}
+                    
+                    {/* Chat Input - Only show in chat view */}
+                    {activeView === 'chat' && (
+                        <div className="chat-input-wrapper">
+                            <div className="chat-input-inner">
+                                <textarea className="chat-input-field" rows={1} placeholder={currentRoom ? `Message ${currentRoom.slug || currentRoom.name}...` : "Select a room to chat..."} value={draftMessage} onChange={e => setDraftMessage(e.target.value)} onKeyDown={handleKeyDown} ref={inputRef} disabled={!currentRoom} />
+                                <button className="chat-send-button" disabled={isSending || !draftMessage.trim() || !currentRoom} onClick={handleSend} aria-label="Send message">
+                                    <span className="chat-send-icon">➤</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        if (!messages.length) return;
+                                        if (!window.confirm('Clear all chat history?')) return;
+                                        const welcome = { id: 'welcome', role: 'assistant', authorTag: currentRoom?.ai_config ? JSON.parse(currentRoom.ai_config).assistant_initials || 'TL' : 'TL', text: 'History cleared. Fresh start! Ask me anything.', createdAt: new Date().toISOString() };
+                                        setMessages([welcome]);
+                                        localStorage.removeItem('theLocal.chatMessages');
+                                        setErrors(prev => [{ id: `e-${Date.now()}`, message: 'Chat history cleared' }, ...prev]);
+                                    }}
+                                    className="ml-2 px-2 py-1 rounded-lg text-[10px] font-semibold bg-slate-800/70 border border-slate-700 text-slate-300 hover:bg-slate-700/70 active:scale-95"
+                                >Clear</button>
+                            </div>
+                            {/* Error toasts rendered globally */}
+                        </div>
+                    )}
+                </div>
             </main>
             <ErrorToasts
                 errors={errors}

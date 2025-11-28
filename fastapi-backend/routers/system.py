@@ -123,21 +123,23 @@ async def get_network_snapshot():
             
             # Add self first
             self_hostname = self_info.get("HostName", "unknown")
+            self_dnsname = self_info.get("DNSName", "unknown").rstrip(".")
             self_ips = self_info.get("TailscaleIPs", [])
             self_online = True  # Self is always "online" if we're running
             
-            # Determine self role
+            # Determine self role based on DNSName (more reliable than HostName)
             self_role = "client"
-            if self_hostname == "home-hub":
-                self_role = "primary-hub"
-                primary_hub_online = True
-            elif self_hostname == "home-hub-1":
+            dns_lower = self_dnsname.lower()
+            if "home-hub-1" in dns_lower:
                 self_role = "dev-hub"
                 dev_hub_online = True
+            elif "home-hub" in dns_lower:
+                self_role = "primary-hub"
+                primary_hub_online = True
             
             devices.append({
                 "id": self_info.get("PublicKey", "self")[:16],
-                "name": self_hostname,
+                "name": self_dnsname,
                 "ips": self_ips,
                 "online": True,
                 "role": self_role,
@@ -147,23 +149,25 @@ async def get_network_snapshot():
             # Add peers
             for peer_key, peer_data in peers.items():
                 peer_hostname = peer_data.get("HostName", "unknown")
+                peer_dnsname = peer_data.get("DNSName", "unknown").rstrip(".")
                 peer_ips = peer_data.get("TailscaleIPs", [])
                 peer_online = peer_data.get("Online", False)
                 
-                # Determine peer role
+                # Determine peer role based on DNSName
                 peer_role = "client"
-                if peer_hostname == "home-hub":
-                    peer_role = "primary-hub"
-                    if peer_online:
-                        primary_hub_online = True
-                elif peer_hostname == "home-hub-1":
+                dns_lower = peer_dnsname.lower()
+                if "home-hub-1" in dns_lower:
                     peer_role = "dev-hub"
                     if peer_online:
                         dev_hub_online = True
+                elif "home-hub" in dns_lower:
+                    peer_role = "primary-hub"
+                    if peer_online:
+                        primary_hub_online = True
                 
                 devices.append({
                     "id": peer_key[:16],
-                    "name": peer_hostname,
+                    "name": peer_dnsname,
                     "ips": peer_ips,
                     "online": peer_online,
                     "role": peer_role,

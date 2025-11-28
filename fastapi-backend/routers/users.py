@@ -8,8 +8,12 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 
 from database import get_db
-from models import User, Device, Notification
-from schemas import UserResponse, UserCreate, UserUpdate
+from models import User, Device, Notification, UserPermission
+from schemas import (
+    UserResponse, UserCreate, UserUpdate,
+    UserProfileResponse, UserProfileUpdate, UserProfileCreate,
+    UserPermissionResponse, UserPresenceResponse
+)
 from auth_utils import get_current_active_user, require_admin, require_moderator, get_password_hash
 
 router = APIRouter()
@@ -430,3 +434,366 @@ async def mark_notification_read(
     db.commit()
     
     return {"message": "Notification marked as read"}
+
+
+# ========================================
+# Multi-User Profile & Permission Routes
+# ========================================
+
+@router.get("/profile/me", response_model=UserProfileResponse)
+async def get_my_profile(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Get full profile for current user"""
+    return current_user
+
+
+@router.patch("/profile/me", response_model=UserProfileResponse)
+async def update_my_profile(
+    profile_data: UserProfileUpdate,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Update current user's profile (display name, handle, avatar, etc.)"""
+    
+    # Update display name
+    if profile_data.display_name is not None:
+        current_user.display_name = profile_data.display_name
+    
+    # Update handle (must be unique)
+    if profile_data.handle is not None:
+        new_handle = profile_data.handle if profile_data.handle.startswith('@') else f"@{profile_data.handle}"
+        
+        existing = db.query(User).filter(
+            User.handle == new_handle,
+            User.id != current_user.id
+        ).first()
+        
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Handle already taken"
+            )
+        
+        current_user.handle = new_handle
+    
+    # Update initials
+    if profile_data.initials is not None:
+        current_user.initials = profile_data.initials
+    
+    # Update avatar
+    if profile_data.avatar_url is not None:
+        current_user.avatar_url = profile_data.avatar_url
+    
+    # Update color
+    if profile_data.color is not None:
+        current_user.color = profile_data.color
+    
+    # Update preferences
+    if profile_data.preferences is not None:
+        import json
+        current_user.preferences = json.dumps(profile_data.preferences)
+    
+    db.commit()
+    db.refresh(current_user)
+    
+    return current_user
+
+
+@router.post("/profile/create-child", response_model=UserProfileResponse)
+async def create_child_profile(
+    profile_data: UserProfileCreate,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Create a child profile under current user (for families)"""
+    
+    # Ensure handle is unique
+    handle = profile_data.handle if profile_data.handle.startswith('@') else f"@{profile_data.handle}"
+    existing = db.query(User).filter(User.handle == handle).first()
+    if existing:
+        # Auto-increment
+        counter = 1
+        while db.query(User).filter(User.handle == f"{handle}{counter}").first():
+            counter += 1
+        handle = f"{handle}{counter}"
+    
+    # Create child user
+    import json
+    new_user = User(
+        name=profile_data.display_name,
+        display_name=profile_data.display_name,
+        handle=handle,
+        email=f"{handle}@child.local",  # Synthetic email
+        hashed_password="",  # No login for children
+        initials=profile_data.initials,
+        avatar_url=profile_data.avatar_url,
+        color=profile_data.color or "#3B82F6",
+        role="child",
+        is_bot=False,
+        status="offline",
+        preferences=json.dumps(profile_data.preferences) if profile_data.preferences else "{}"
+    )
+    
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    
+    return new_user
+
+
+@router.get("/{user_id}/permissions", response_model=List[UserPermissionResponse])
+async def get_user_permissions(
+    user_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Get all permissions for a user (self, admin, or owner only)"""
+    
+    # Check access
+    if current_user.id != user_id and current_user.role not in ["admin", "owner"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to view permissions"
+        )
+    
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    # Owner has all permissions
+    if user.role == "owner":
+        return [{
+            "id": 0,
+            "user_id": user_id,
+            "permission": "*",
+            "granted_by": None,
+            "granted_at": user.created_at
+        }]
+    
+    permissions = db.query(UserPermission).filter(UserPermission.user_id == user_id).all()
+    return permissions
+
+
+@router.post("/{user_id}/permissions/{permission}")
+async def add_user_permission(
+    user_id: int,
+    permission: str,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    """Add a permission to a user (admin only)"""
+    
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    # Check if permission already exists
+    existing = db.query(UserPermission).filter(
+        UserPermission.user_id == user_id,
+        UserPermission.permission == permission
+    ).first()
+    
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Permission already granted"
+        )
+    
+    # Create permission
+    new_permission = UserPermission(
+        user_id=user_id,
+        permission=permission,
+        granted_by=current_user.id
+    )
+    
+    db.add(new_permission)
+    db.commit()
+    db.refresh(new_permission)
+    
+    return {"message": f"Permission '{permission}' granted to user {user_id}"}
+
+
+@router.delete("/{user_id}/permissions/{permission}")
+async def remove_user_permission(
+    user_id: int,
+    permission: str,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    """Remove a permission from a user (admin only)"""
+    
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    # Cannot remove permissions from owner
+    if user.role == "owner":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot modify owner permissions"
+        )
+    
+    permission_record = db.query(UserPermission).filter(
+        UserPermission.user_id == user_id,
+        UserPermission.permission == permission
+    ).first()
+    
+    if not permission_record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Permission not found"
+        )
+    
+    db.delete(permission_record)
+    db.commit()
+    
+    return {"message": f"Permission '{permission}' removed from user {user_id}"}
+
+
+@router.get("/{user_id}/presence", response_model=UserPresenceResponse)
+async def get_user_presence(
+    user_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Get online presence status for a user"""
+    from datetime import datetime, timedelta
+    
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    # Get active devices
+    active_devices = db.query(Device).filter(
+        Device.user_id == user_id,
+        Device.is_active == True
+    ).all()
+    
+    # Determine online status based on last_active_at
+    status = "offline"
+    if user.last_active_at:
+        time_diff = datetime.utcnow() - user.last_active_at
+        if time_diff < timedelta(minutes=5):
+            status = "online"
+        elif time_diff < timedelta(hours=1):
+            status = "away"
+    
+    return {
+        "user_id": user_id,
+        "status": status,
+        "last_active_at": user.last_active_at,
+        "active_devices": len(active_devices)
+    }
+
+
+@router.post("/{user_id}/activity")
+async def update_user_activity(
+    user_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Update last_active_at timestamp (called by clients periodically)"""
+    
+    # Only allow updating own activity
+    if current_user.id != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Can only update own activity"
+        )
+    
+    from datetime import datetime
+    current_user.last_active_at = datetime.utcnow()
+    db.commit()
+    
+    return {"message": "Activity updated"}
+
+
+@router.get("/{user_id}/devices", response_model=List)
+async def get_user_devices(
+    user_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Get all devices linked to a user"""
+    
+    # Check access
+    if current_user.id != user_id and current_user.role not in ["admin", "owner"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to view devices"
+        )
+    
+    devices = db.query(Device).filter(Device.user_id == user_id).all()
+    return devices
+
+
+@router.post("/{user_id}/link-device")
+async def link_device_to_user(
+    user_id: int,
+    device_data: dict = Body(...),
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    """Link a Tailscale device to a user (admin only)"""
+    
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    device_id = device_data.get("device_id")
+    hostname = device_data.get("hostname")
+    is_primary = device_data.get("is_primary", False)
+    
+    if not device_id or not hostname:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="device_id and hostname are required"
+        )
+    
+    # Check if device already linked to another user
+    existing = db.query(Device).filter(Device.device_id == device_id).first()
+    if existing and existing.user_id != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Device already linked to another user"
+        )
+    
+    if existing:
+        # Update existing device
+        existing.hostname = hostname
+        existing.is_primary = is_primary
+        device = existing
+    else:
+        # Create new device
+        device = Device(
+            user_id=user_id,
+            device_id=device_id,
+            hostname=hostname,
+            is_primary=is_primary,
+            device_name=hostname,
+            ip_address="",
+            is_active=True
+        )
+        db.add(device)
+    
+    db.commit()
+    db.refresh(device)
+    
+    return {"message": f"Device {hostname} linked to user {user_id}", "device": device}

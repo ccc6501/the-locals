@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from database import get_db, engine, Base
-from routers import auth, users, invites, chat, connections, storage, settings, system, devices
+from routers import auth, users, invites, chat, connections, storage, settings, system, devices, rooms
 from chat_routes import router as chat_router
 # from websocket_manager import ConnectionManager
 
@@ -51,6 +51,7 @@ app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
 app.include_router(users.router, prefix="/api/users", tags=["Users"])
 app.include_router(devices.router, prefix="/api/devices", tags=["Devices"])
 app.include_router(invites.router, prefix="/api/invites", tags=["Invites"])
+app.include_router(rooms.router, prefix="/api/rooms", tags=["Rooms"])
 app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
 app.include_router(chat_router)  # Group chat routes at /chat
 app.include_router(connections.router, prefix="/api/connections", tags=["Connections"])

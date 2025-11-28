@@ -42,7 +42,7 @@ const pickApiBase = async () => {
     const hostname = window.location.hostname;
     const candidates = [];
     // Port candidates align with tray BACKEND_PORTS fallback
-    const portList = (localStorage.getItem('theLocal.portCandidates') || '8000,8001,8002')
+    const portList = (localStorage.getItem('theLocal.portCandidates') || '8001,8000,8002')
         .split(',').map(p => p.trim()).filter(Boolean);
     for (const p of portList) {
         if (hostname === 'localhost' || hostname === '127.0.0.1') {
@@ -65,9 +65,9 @@ const pickApiBase = async () => {
         } catch { /* try next */ }
     }
     // Fallback default
-    return candidates[0] || 'http://localhost:8000';
+    return candidates[0] || 'http://localhost:8001';
 };
-let API_BASE = 'http://localhost:8000'; // will be updated asynchronously
+let API_BASE = 'http://localhost:8001'; // will be updated asynchronously
 
 const getUserColor = (userName) => {
     if (!userName) return 'from-violet-500 to-sky-500';

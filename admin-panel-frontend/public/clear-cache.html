@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Clear API Cache</title>
+</head>
+<body>
+    <h1>Clearing API Cache...</h1>
+    <script>
+        // Clear cached API base
+        localStorage.removeItem('theLocal.apiBaseCached');
+        localStorage.setItem('theLocal.apiBaseOverride', 'http://localhost:8001');
+        
+        setTimeout(() => {
+            alert('Cache cleared! Backend is now set to http://localhost:8001\n\nRefresh the main page.');
+            window.close();
+        }, 500);
+    </script>
+</body>
+</html>

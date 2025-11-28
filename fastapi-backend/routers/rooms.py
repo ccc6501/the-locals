@@ -19,13 +19,36 @@ from auth_utils import get_current_active_user
 router = APIRouter()
 
 
+# Helper to get current user or default to first user for localhost
+async def get_user_or_default(
+    current_user: Optional[User] = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+) -> User:
+    """Get current user or default to first owner user for localhost development"""
+    if current_user:
+        return current_user
+    
+    # For localhost development without auth, use first owner
+    default_user = db.query(User).filter(User.role == "owner").first()
+    if not default_user:
+        default_user = db.query(User).first()
+    
+    if not default_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="No users found - run init script"
+        )
+    
+    return default_user
+
+
 # ========================================
 # Room Management
 # ========================================
 
 @router.get("", response_model=List[RoomResponse])
 async def list_rooms(
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_user_or_default),
     db: Session = Depends(get_db)
 ):
     """List all rooms the current user has access to"""
@@ -55,7 +78,7 @@ async def list_system_rooms(
 @router.post("", response_model=RoomResponse)
 async def create_room(
     room_data: RoomCreate,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_user_or_default),
     db: Session = Depends(get_db)
 ):
     """Create a new room"""

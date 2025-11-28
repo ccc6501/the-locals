@@ -375,6 +375,41 @@ const ChatOpsConsoleStable = () => {
         for (const k of candidates) { const v = localStorage.getItem(k); if (v) return v; }
         return null;
     };
+
+    const createRoom = async (slug, name) => {
+        try {
+            const token = resolveToken();
+            const res = await fetch(`${API_BASE}/api/rooms`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+                },
+                body: JSON.stringify({
+                    slug,
+                    name,
+                    type: 'group',
+                    icon: '💬',
+                    color: '#8b5cf6'
+                })
+            });
+
+            if (!res.ok) {
+                const error = await res.text();
+                throw new Error(`Failed to create room: ${error}`);
+            }
+
+            const newRoom = await res.json();
+            setRooms(prev => [...prev, newRoom]);
+            setCurrentRoom(newRoom);
+            setActiveView('chat');
+            pushError(`Room "${name}" created!`);
+        } catch (e) {
+            console.error('Failed to create room:', e);
+            pushError(e.message);
+        }
+    };
+
     const refreshLogs = async () => {
         const token = resolveToken();
         if (!token) { setLogs(null); return; }
@@ -525,17 +560,6 @@ const ChatOpsConsoleStable = () => {
                     </div>
                 </div>
                 <div className="flex items-center gap-3">
-                    {/* Mobile rooms menu button - only show in chat view */}
-                    {activeView === 'chat' && (
-                        <button
-                            onClick={() => setMobileMenuOpen(true)}
-                            className="md:hidden h-10 w-10 rounded-xl bg-slate-900/80 border border-slate-700 flex items-center justify-center"
-                            aria-label="Open rooms"
-                        >
-                            <MessageSquare className="w-4 h-4 text-slate-100" />
-                        </button>
-                    )}
-
                     {/* User Profile Switcher */}
                     {currentUser && users.length > 0 && (
                         <UserProfileSwitcher
@@ -610,10 +634,11 @@ const ChatOpsConsoleStable = () => {
                             </div>
                         </div>
                         <nav className="p-4 flex-none space-y-2 border-t border-slate-800/60 bg-slate-950/50 backdrop-blur-md">
-                            {['dashboard', 'chat', 'connections', 'cloud', 'stats', 'system', 'profile', 'settings'].map(view => (
+                            {['dashboard', 'chat', 'rooms', 'connections', 'cloud', 'stats', 'system', 'profile', 'settings'].map(view => (
                                 <button key={view} onClick={() => { setActiveView(view); setMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-sm font-medium transition-all ${activeView === view ? 'bg-gradient-to-r from-violet-600 to-sky-600 text-white shadow-lg' : 'text-slate-300 hover:bg-slate-800/70'}`}>
                                     {view === 'dashboard' && <Home className="w-5 h-5" />}
                                     {view === 'chat' && <MessageSquare className="w-5 h-5" />}
+                                    {view === 'rooms' && <MessageSquare className="w-5 h-5" />}
                                     {view === 'connections' && <Share2 className="w-5 h-5" />}
                                     {view === 'cloud' && <Cloud className="w-5 h-5" />}
                                     {view === 'stats' && <BarChart3 className="w-5 h-5" />}
@@ -630,39 +655,6 @@ const ChatOpsConsoleStable = () => {
 
             <main className="chat-app-main">
                 <div className="flex flex-1 min-h-0">
-                    {/* Room List Sidebar - Show on desktop always, on mobile when menu open */}
-                    {activeView === 'chat' && (
-                        <div className={`${mobileMenuOpen ? 'fixed inset-y-0 left-0 z-50 bg-slate-900/95 backdrop-blur-xl' : 'hidden'} md:block md:relative`}>
-                            {mobileMenuOpen && (
-                                <div className="flex items-center justify-between p-4 border-b border-slate-800">
-                                    <span className="text-sm font-semibold">Rooms</span>
-                                    <button onClick={() => setMobileMenuOpen(false)} className="p-1 rounded-lg hover:bg-slate-800/60">
-                                        <X className="w-5 h-5 text-slate-400" />
-                                    </button>
-                                </div>
-                            )}
-                            {roomsLoading ? (
-                                <div className="w-64 p-4 text-center text-slate-400 text-sm">Loading rooms...</div>
-                            ) : rooms.length === 0 ? (
-                                <div className="w-64 p-4 text-center text-slate-400 text-sm">
-                                    <MessageSquare className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                                    <p className="mb-2">No rooms yet</p>
-                                    <p className="text-xs text-slate-500">Run init_multi_user.py to create rooms</p>
-                                </div>
-                            ) : (
-                                <RoomList
-                                    rooms={rooms}
-                                    currentRoomId={currentRoom?.id}
-                                    onRoomSelect={(room) => {
-                                        handleRoomSelect(room);
-                                        setMobileMenuOpen(false);
-                                    }}
-                                    unreadCounts={unreadCounts}
-                                />
-                            )}
-                        </div>
-                    )}
-
                     {/* Main Content Area */}
                     <div className="flex-1 flex flex-col min-h-0">
                         {/* Room Header - Only show in chat view when room selected */}
@@ -677,6 +669,86 @@ const ChatOpsConsoleStable = () => {
                         <div className="chat-scroll-area flex-1" ref={messagesContainerRef}>
                             {activeView === 'chat' && renderMessages()}
                             {activeView === 'dashboard' && <DashboardPanel recentMessages={messages} logs={logs} />}
+                            {activeView === 'rooms' && (
+                                <div className="p-6 max-w-4xl mx-auto w-full">
+                                    <div className="flex items-center justify-between mb-6">
+                                        <h2 className="text-2xl font-bold text-white">Rooms</h2>
+                                        <button
+                                            onClick={() => {
+                                                const name = prompt('Room name:');
+                                                if (!name) return;
+                                                const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+                                                createRoom(slug, name);
+                                            }}
+                                            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-violet-600 to-sky-600 text-white font-medium hover:from-violet-700 hover:to-sky-700 transition-all"
+                                        >
+                                            <MessageSquare className="w-4 h-4" />
+                                            Create Room
+                                        </button>
+                                    </div>
+                                    
+                                    {roomsLoading ? (
+                                        <div className="text-center text-slate-400 py-12">
+                                            <RefreshCw className="w-8 h-8 mx-auto mb-3 animate-spin opacity-50" />
+                                            <p>Loading rooms...</p>
+                                        </div>
+                                    ) : rooms.length === 0 ? (
+                                        <div className="text-center text-slate-400 py-12">
+                                            <MessageSquare className="w-12 h-12 mx-auto mb-4 opacity-30" />
+                                            <p className="text-lg mb-2">No rooms yet</p>
+                                            <p className="text-sm text-slate-500">Create your first room or run init_multi_user.py to set up default rooms</p>
+                                        </div>
+                                    ) : (
+                                        <div className="grid gap-3">
+                                            {rooms.map(room => {
+                                                const unreadCount = unreadCounts[room.id] || 0;
+                                                const isActive = currentRoom?.id === room.id;
+                                                
+                                                return (
+                                                    <button
+                                                        key={room.id}
+                                                        onClick={() => {
+                                                            handleRoomSelect(room);
+                                                            setActiveView('chat');
+                                                        }}
+                                                        className={`flex items-center gap-4 p-4 rounded-xl border transition-all text-left ${
+                                                            isActive
+                                                                ? 'bg-gradient-to-r from-violet-600 to-sky-600 border-violet-500 text-white'
+                                                                : 'bg-slate-900/50 border-slate-800 text-slate-300 hover:bg-slate-800/70 hover:border-slate-700'
+                                                        }`}
+                                                    >
+                                                        <div className={`flex-shrink-0 w-12 h-12 rounded-xl flex items-center justify-center ${
+                                                            isActive ? 'bg-white/20' : 'bg-slate-800'
+                                                        }`}>
+                                                            {room.type === 'system' && <MessageSquare className="w-6 h-6" />}
+                                                            {room.type === 'dm' && <User className="w-6 h-6" />}
+                                                            {room.type === 'group' && <User className="w-6 h-6" />}
+                                                        </div>
+                                                        
+                                                        <div className="flex-1 min-w-0">
+                                                            <div className="flex items-center gap-2 mb-1">
+                                                                <span className="font-semibold text-sm">{room.name}</span>
+                                                                {room.is_system && (
+                                                                    <span className="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-400">System</span>
+                                                                )}
+                                                            </div>
+                                                            {room.slug && (
+                                                                <span className="text-xs text-slate-400">#{room.slug}</span>
+                                                            )}
+                                                        </div>
+                                                        
+                                                        {unreadCount > 0 && (
+                                                            <div className="flex-shrink-0 bg-rose-500 text-white text-xs font-bold rounded-full min-w-[24px] h-6 flex items-center justify-center px-2">
+                                                                {unreadCount > 99 ? '99+' : unreadCount}
+                                                            </div>
+                                                        )}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
                             {activeView === 'connections' && (
                                 <ConnectionsPanel
                                     provider={provider}
@@ -708,7 +780,7 @@ const ChatOpsConsoleStable = () => {
                             )}
                             {activeView === 'system' && <SystemPanel tailnetStats={tailnetStats} refreshTailnetStats={refreshTailnetStats} exitNodeChanging={tailnetLoading} setExitNodeChanging={setTailnetLoading} />}
                             {activeView === 'cloud' && <CloudPanel apiBase={API_BASE} />}
-                            {activeView !== 'chat' && activeView !== 'connections' && activeView !== 'dashboard' && activeView !== 'system' && activeView !== 'cloud' && <ViewPlaceholder view={activeView} />}
+                            {activeView !== 'chat' && activeView !== 'connections' && activeView !== 'dashboard' && activeView !== 'system' && activeView !== 'cloud' && activeView !== 'rooms' && <ViewPlaceholder view={activeView} />}
                         </div>
 
                         {/* Chat Input - Only show in chat view */}

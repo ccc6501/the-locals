@@ -43,17 +43,15 @@ export const RoomList = ({ rooms, currentRoomId, onRoomSelect, unreadCounts = {}
                                 <button
                                     key={room.id}
                                     onClick={() => onRoomSelect(room)}
-                                    className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all ${
-                                        isActive
+                                    className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all ${isActive
                                             ? 'bg-violet-600 text-white'
                                             : 'text-slate-300 hover:bg-slate-800 hover:text-white'
-                                    }`}
+                                        }`}
                                 >
                                     {/* Room Icon */}
                                     <div
-                                        className={`flex-shrink-0 w-8 h-8 rounded flex items-center justify-center ${
-                                            isActive ? 'bg-violet-700' : 'bg-slate-800'
-                                        }`}
+                                        className={`flex-shrink-0 w-8 h-8 rounded flex items-center justify-center ${isActive ? 'bg-violet-700' : 'bg-slate-800'
+                                            }`}
                                         style={{
                                             backgroundColor: isActive ? undefined : room.color || '#475569'
                                         }}
@@ -75,11 +73,10 @@ export const RoomList = ({ rooms, currentRoomId, onRoomSelect, unreadCounts = {}
 
                                     {/* Unread Badge */}
                                     {unreadCount > 0 && (
-                                        <div className={`flex-shrink-0 px-2 py-0.5 rounded-full text-xs font-semibold ${
-                                            isActive
+                                        <div className={`flex-shrink-0 px-2 py-0.5 rounded-full text-xs font-semibold ${isActive
                                                 ? 'bg-white text-violet-600'
                                                 : 'bg-violet-600 text-white'
-                                        }`}>
+                                            }`}>
                                             {unreadCount > 99 ? '99+' : unreadCount}
                                         </div>
                                     )}

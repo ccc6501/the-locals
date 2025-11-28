@@ -49,11 +49,10 @@ export const UserProfileSwitcher = ({ users, currentUser, onUserSelect, onCreate
                                         onUserSelect(user);
                                         setIsOpen(false);
                                     }}
-                                    className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
-                                        user.id === currentUser.id
+                                    className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${user.id === currentUser.id
                                             ? 'bg-violet-600 text-white'
                                             : 'text-slate-300 hover:bg-slate-700 hover:text-white'
-                                    }`}
+                                        }`}
                                 >
                                     <UserAvatar user={user} size="sm" />
                                     <div className="flex-1 text-left min-w-0">

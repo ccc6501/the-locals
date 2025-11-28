@@ -204,10 +204,10 @@ const ChatOpsConsoleStable = () => {
         })();
     }, []);
     useEffect(() => {
-        const interval = setInterval(() => { 
-            refreshTailnetStats(); 
-            refreshSystemSummary(); 
-            refreshUserCount(); 
+        const interval = setInterval(() => {
+            refreshTailnetStats();
+            refreshSystemSummary();
+            refreshUserCount();
             refreshLogs();
             refreshUnreadCounts();
         }, 30000);
@@ -288,24 +288,32 @@ const ChatOpsConsoleStable = () => {
     };
 
     const refreshRooms = async () => {
-        if (!currentUser) return;
         setRoomsLoading(true);
         try {
             const token = resolveToken();
             const res = await fetch(`${API_BASE}/api/rooms`, {
                 headers: token ? { 'Authorization': `Bearer ${token}` } : {}
             });
-            if (!res.ok) throw new Error(`Rooms ${res.status}`);
+            if (!res.ok) {
+                // If we get 401/403, might need user setup
+                if (res.status === 401 || res.status === 403) {
+                    console.warn('Rooms require authentication. Run init_multi_user.py to set up users.');
+                }
+                throw new Error(`Rooms ${res.status}`);
+            }
             const data = await res.json();
             setRooms(data || []);
-            
+
             // Auto-select first room if none selected
             if (!currentRoom && data.length > 0) {
                 setCurrentRoom(data[0]);
             }
         } catch (e) {
             console.error('Failed to load rooms:', e);
-            pushError(`Failed to load rooms: ${e.message}`);
+            // Don't show error toast on every failed load - it's expected if DB not initialized
+            if (!e.message.includes('401') && !e.message.includes('403')) {
+                pushError(`Failed to load rooms: ${e.message}`);
+            }
         } finally {
             setRoomsLoading(false);
         }
@@ -320,7 +328,7 @@ const ChatOpsConsoleStable = () => {
             if (!res.ok) throw new Error(`Users ${res.status}`);
             const data = await res.json();
             setUsers(data || []);
-            
+
             // Auto-select current user if not set
             if (!currentUser && data.length > 0) {
                 // Find owner or first user
@@ -334,11 +342,11 @@ const ChatOpsConsoleStable = () => {
 
     const refreshUnreadCounts = async () => {
         if (!currentUser || !rooms.length) return;
-        
+
         try {
             const token = resolveToken();
             const counts = {};
-            
+
             // Fetch unread count for each room
             await Promise.all(
                 rooms.map(async (room) => {
@@ -355,7 +363,7 @@ const ChatOpsConsoleStable = () => {
                     }
                 })
             );
-            
+
             setUnreadCounts(counts);
         } catch (e) {
             console.error('Failed to refresh unread counts:', e);
@@ -383,23 +391,23 @@ const ChatOpsConsoleStable = () => {
         if (provider === 'openai' && !openaiKey) effectiveProvider = 'ollama';
         let selectedModel = effectiveProvider === 'openai' ? openaiModel : ollamaModel;
         if (effectiveProvider === 'ollama' && (!selectedModel || !ollamaModels.includes(selectedModel))) { effectiveProvider = 'openai'; selectedModel = openaiModel; }
-        
+
         // Build payload with room context
-        const payload = { 
-            message: text, 
-            provider: effectiveProvider, 
-            temperature: temp, 
-            config: effectiveProvider === 'openai' 
-                ? { api_key: openaiKey || undefined, model: selectedModel } 
+        const payload = {
+            message: text,
+            provider: effectiveProvider,
+            temperature: temp,
+            config: effectiveProvider === 'openai'
+                ? { api_key: openaiKey || undefined, model: selectedModel }
                 : { base_url: ollamaUrl, model: selectedModel },
             room_id: currentRoom?.id,
             user_id: currentUser?.id
         };
-        
-        const res = await fetch(`${API_BASE}/api/chat/chat`, { 
-            method: 'POST', 
-            headers: { 'Content-Type': 'application/json' }, 
-            body: JSON.stringify(payload) 
+
+        const res = await fetch(`${API_BASE}/api/chat/chat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
@@ -423,7 +431,7 @@ const ChatOpsConsoleStable = () => {
                 const next = prev + 1; localStorage.setItem('theLocal.aiRequestCount', String(next)); return next;
             });
             setLastChatOk(true);
-            
+
             // Mark room as read after sending
             if (currentRoom?.id && currentUser?.id) {
                 markRoomAsRead(currentRoom.id);
@@ -517,6 +525,17 @@ const ChatOpsConsoleStable = () => {
                     </div>
                 </div>
                 <div className="flex items-center gap-3">
+                    {/* Mobile rooms menu button - only show in chat view */}
+                    {activeView === 'chat' && (
+                        <button
+                            onClick={() => setMobileMenuOpen(true)}
+                            className="md:hidden h-10 w-10 rounded-xl bg-slate-900/80 border border-slate-700 flex items-center justify-center"
+                            aria-label="Open rooms"
+                        >
+                            <MessageSquare className="w-4 h-4 text-slate-100" />
+                        </button>
+                    )}
+
                     {/* User Profile Switcher */}
                     {currentUser && users.length > 0 && (
                         <UserProfileSwitcher
@@ -525,7 +544,7 @@ const ChatOpsConsoleStable = () => {
                             onUserSelect={handleUserSelect}
                         />
                     )}
-                    
+
                     <button type="button" onClick={() => setProvider(prev => prev === 'openai' ? 'ollama' : 'openai')} className="flex items-center gap-1.5 px-3 py-2 rounded-lg border text-[11px] font-medium transition-colors active:scale-[0.97] bg-slate-800/60 border-slate-700/60 hover:bg-slate-700/60" aria-label="Toggle AI provider">
                         <Cpu className="w-3.5 h-3.5 text-slate-300" />
                         {/* Key presence dot for OpenAI */}
@@ -609,89 +628,114 @@ const ChatOpsConsoleStable = () => {
                 </>
             )}
 
-            <main className="chat-app-main flex">
-                {/* Room List Sidebar - Only show in chat view */}
-                {activeView === 'chat' && rooms.length > 0 && (
-                    <RoomList
-                        rooms={rooms}
-                        currentRoomId={currentRoom?.id}
-                        onRoomSelect={handleRoomSelect}
-                        unreadCounts={unreadCounts}
-                    />
-                )}
-                
-                {/* Main Content Area */}
-                <div className="flex-1 flex flex-col">
-                    {/* Room Header - Only show in chat view when room selected */}
-                    {activeView === 'chat' && currentRoom && (
-                        <RoomHeader
-                            room={currentRoom}
-                            aiConfig={currentRoom.ai_config ? JSON.parse(currentRoom.ai_config) : {}}
-                        />
-                    )}
-                    
-                    {/* Messages/Content Area */}
-                    <div className="chat-scroll-area flex-1" ref={messagesContainerRef}>
-                        {activeView === 'chat' && renderMessages()}
-                        {activeView === 'dashboard' && <DashboardPanel recentMessages={messages} logs={logs} />}
-                        {activeView === 'connections' && (
-                            <ConnectionsPanel
-                                provider={provider}
-                                setProvider={setProvider}
-                                openaiKey={openaiKey}
-                                setOpenaiKey={setOpenaiKey}
-                                openaiModel={openaiModel}
-                                setOpenaiModel={setOpenaiModel}
-                                ollamaUrl={ollamaUrl}
-                                setOllamaUrl={setOllamaUrl}
-                                ollamaModel={ollamaModel}
-                                setOllamaModel={setOllamaModel}
-                                ollamaModels={ollamaModels}
-                                ollamaModelsLoading={ollamaModelsLoading}
-                                refreshOllamaModels={refreshOllamaModels}
-                                temp={temp}
-                                setTemp={setTemp}
-                                providerMeta={providerMeta}
-                                cloudPath={cloudPath}
-                                setCloudPath={setCloudPath}
-                                cloudEndpoint={cloudEndpoint}
-                                setCloudEndpoint={setCloudEndpoint}
-                                tailnetStats={tailnetStats}
-                                tailnetLoading={tailnetLoading}
-                                tailnetError={tailnetError}
-                                refreshTailnetStats={refreshTailnetStats}
-                                apiBase={API_BASE}
-                            />
-                        )}
-                        {activeView === 'system' && <SystemPanel tailnetStats={tailnetStats} refreshTailnetStats={refreshTailnetStats} exitNodeChanging={tailnetLoading} setExitNodeChanging={setTailnetLoading} />}
-                        {activeView === 'cloud' && <CloudPanel apiBase={API_BASE} />}
-                        {activeView !== 'chat' && activeView !== 'connections' && activeView !== 'dashboard' && activeView !== 'system' && activeView !== 'cloud' && <ViewPlaceholder view={activeView} />}
-                    </div>
-                    
-                    {/* Chat Input - Only show in chat view */}
+            <main className="chat-app-main">
+                <div className="flex flex-1 min-h-0">
+                    {/* Room List Sidebar - Show on desktop always, on mobile when menu open */}
                     {activeView === 'chat' && (
-                        <div className="chat-input-wrapper">
-                            <div className="chat-input-inner">
-                                <textarea className="chat-input-field" rows={1} placeholder={currentRoom ? `Message ${currentRoom.slug || currentRoom.name}...` : "Select a room to chat..."} value={draftMessage} onChange={e => setDraftMessage(e.target.value)} onKeyDown={handleKeyDown} ref={inputRef} disabled={!currentRoom} />
-                                <button className="chat-send-button" disabled={isSending || !draftMessage.trim() || !currentRoom} onClick={handleSend} aria-label="Send message">
-                                    <span className="chat-send-icon">➤</span>
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        if (!messages.length) return;
-                                        if (!window.confirm('Clear all chat history?')) return;
-                                        const welcome = { id: 'welcome', role: 'assistant', authorTag: currentRoom?.ai_config ? JSON.parse(currentRoom.ai_config).assistant_initials || 'TL' : 'TL', text: 'History cleared. Fresh start! Ask me anything.', createdAt: new Date().toISOString() };
-                                        setMessages([welcome]);
-                                        localStorage.removeItem('theLocal.chatMessages');
-                                        setErrors(prev => [{ id: `e-${Date.now()}`, message: 'Chat history cleared' }, ...prev]);
+                        <div className={`${mobileMenuOpen ? 'fixed inset-y-0 left-0 z-50 bg-slate-900/95 backdrop-blur-xl' : 'hidden'} md:block md:relative`}>
+                            {mobileMenuOpen && (
+                                <div className="flex items-center justify-between p-4 border-b border-slate-800">
+                                    <span className="text-sm font-semibold">Rooms</span>
+                                    <button onClick={() => setMobileMenuOpen(false)} className="p-1 rounded-lg hover:bg-slate-800/60">
+                                        <X className="w-5 h-5 text-slate-400" />
+                                    </button>
+                                </div>
+                            )}
+                            {roomsLoading ? (
+                                <div className="w-64 p-4 text-center text-slate-400 text-sm">Loading rooms...</div>
+                            ) : rooms.length === 0 ? (
+                                <div className="w-64 p-4 text-center text-slate-400 text-sm">
+                                    <MessageSquare className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                                    <p className="mb-2">No rooms yet</p>
+                                    <p className="text-xs text-slate-500">Run init_multi_user.py to create rooms</p>
+                                </div>
+                            ) : (
+                                <RoomList
+                                    rooms={rooms}
+                                    currentRoomId={currentRoom?.id}
+                                    onRoomSelect={(room) => {
+                                        handleRoomSelect(room);
+                                        setMobileMenuOpen(false);
                                     }}
-                                    className="ml-2 px-2 py-1 rounded-lg text-[10px] font-semibold bg-slate-800/70 border border-slate-700 text-slate-300 hover:bg-slate-700/70 active:scale-95"
-                                >Clear</button>
-                            </div>
-                            {/* Error toasts rendered globally */}
+                                    unreadCounts={unreadCounts}
+                                />
+                            )}
                         </div>
                     )}
+
+                    {/* Main Content Area */}
+                    <div className="flex-1 flex flex-col min-h-0">
+                        {/* Room Header - Only show in chat view when room selected */}
+                        {activeView === 'chat' && currentRoom && (
+                            <RoomHeader
+                                room={currentRoom}
+                                aiConfig={currentRoom.ai_config ? JSON.parse(currentRoom.ai_config) : {}}
+                            />
+                        )}
+
+                        {/* Messages/Content Area */}
+                        <div className="chat-scroll-area flex-1" ref={messagesContainerRef}>
+                            {activeView === 'chat' && renderMessages()}
+                            {activeView === 'dashboard' && <DashboardPanel recentMessages={messages} logs={logs} />}
+                            {activeView === 'connections' && (
+                                <ConnectionsPanel
+                                    provider={provider}
+                                    setProvider={setProvider}
+                                    openaiKey={openaiKey}
+                                    setOpenaiKey={setOpenaiKey}
+                                    openaiModel={openaiModel}
+                                    setOpenaiModel={setOpenaiModel}
+                                    ollamaUrl={ollamaUrl}
+                                    setOllamaUrl={setOllamaUrl}
+                                    ollamaModel={ollamaModel}
+                                    setOllamaModel={setOllamaModel}
+                                    ollamaModels={ollamaModels}
+                                    ollamaModelsLoading={ollamaModelsLoading}
+                                    refreshOllamaModels={refreshOllamaModels}
+                                    temp={temp}
+                                    setTemp={setTemp}
+                                    providerMeta={providerMeta}
+                                    cloudPath={cloudPath}
+                                    setCloudPath={setCloudPath}
+                                    cloudEndpoint={cloudEndpoint}
+                                    setCloudEndpoint={setCloudEndpoint}
+                                    tailnetStats={tailnetStats}
+                                    tailnetLoading={tailnetLoading}
+                                    tailnetError={tailnetError}
+                                    refreshTailnetStats={refreshTailnetStats}
+                                    apiBase={API_BASE}
+                                />
+                            )}
+                            {activeView === 'system' && <SystemPanel tailnetStats={tailnetStats} refreshTailnetStats={refreshTailnetStats} exitNodeChanging={tailnetLoading} setExitNodeChanging={setTailnetLoading} />}
+                            {activeView === 'cloud' && <CloudPanel apiBase={API_BASE} />}
+                            {activeView !== 'chat' && activeView !== 'connections' && activeView !== 'dashboard' && activeView !== 'system' && activeView !== 'cloud' && <ViewPlaceholder view={activeView} />}
+                        </div>
+
+                        {/* Chat Input - Only show in chat view */}
+                        {activeView === 'chat' && (
+                            <div className="chat-input-wrapper">
+                                <div className="chat-input-inner">
+                                    <textarea className="chat-input-field" rows={1} placeholder={currentRoom ? `Message ${currentRoom.slug || currentRoom.name}...` : "Select a room to chat..."} value={draftMessage} onChange={e => setDraftMessage(e.target.value)} onKeyDown={handleKeyDown} ref={inputRef} disabled={!currentRoom} />
+                                    <button className="chat-send-button" disabled={isSending || !draftMessage.trim() || !currentRoom} onClick={handleSend} aria-label="Send message">
+                                        <span className="chat-send-icon">➤</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            if (!messages.length) return;
+                                            if (!window.confirm('Clear all chat history?')) return;
+                                            const welcome = { id: 'welcome', role: 'assistant', authorTag: currentRoom?.ai_config ? JSON.parse(currentRoom.ai_config).assistant_initials || 'TL' : 'TL', text: 'History cleared. Fresh start! Ask me anything.', createdAt: new Date().toISOString() };
+                                            setMessages([welcome]);
+                                            localStorage.removeItem('theLocal.chatMessages');
+                                            setErrors(prev => [{ id: `e-${Date.now()}`, message: 'Chat history cleared' }, ...prev]);
+                                        }}
+                                        className="ml-2 px-2 py-1 rounded-lg text-[10px] font-semibold bg-slate-800/70 border border-slate-700 text-slate-300 hover:bg-slate-700/70 active:scale-95"
+                                    >Clear</button>
+                                </div>
+                                {/* Error toasts rendered globally */}
+                            </div>
+                        )}
+                    </div>
                 </div>
             </main>
             <ErrorToasts

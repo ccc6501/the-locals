@@ -93,6 +93,130 @@ async def get_tailscale_summary():
             "error": str(e)
         }
 
+
+@router.get("/tailscale/snapshot")
+async def get_network_snapshot():
+    """
+    Get detailed network snapshot with device roles and real-time status.
+    Treats 'home-hub' as primary hub, 'home-hub-1' as dev hub.
+    No authentication required for AI context.
+    """
+    try:
+        result = subprocess.run(
+            ["tailscale", "status", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        
+        if result.returncode == 0:
+            import json
+            status_data = json.loads(result.stdout)
+            
+            peers = status_data.get("Peer", {})
+            self_info = status_data.get("Self", {})
+            
+            # Build device list with roles
+            devices = []
+            primary_hub_online = False
+            dev_hub_online = False
+            
+            # Add self first
+            self_hostname = self_info.get("HostName", "unknown")
+            self_ips = self_info.get("TailscaleIPs", [])
+            self_online = True  # Self is always "online" if we're running
+            
+            # Determine self role
+            self_role = "client"
+            if self_hostname == "home-hub":
+                self_role = "primary-hub"
+                primary_hub_online = True
+            elif self_hostname == "home-hub-1":
+                self_role = "dev-hub"
+                dev_hub_online = True
+            
+            devices.append({
+                "id": self_info.get("PublicKey", "self")[:16],
+                "name": self_hostname,
+                "ips": self_ips,
+                "online": True,
+                "role": self_role,
+                "is_self": True
+            })
+            
+            # Add peers
+            for peer_key, peer_data in peers.items():
+                peer_hostname = peer_data.get("HostName", "unknown")
+                peer_ips = peer_data.get("TailscaleIPs", [])
+                peer_online = peer_data.get("Online", False)
+                
+                # Determine peer role
+                peer_role = "client"
+                if peer_hostname == "home-hub":
+                    peer_role = "primary-hub"
+                    if peer_online:
+                        primary_hub_online = True
+                elif peer_hostname == "home-hub-1":
+                    peer_role = "dev-hub"
+                    if peer_online:
+                        dev_hub_online = True
+                
+                devices.append({
+                    "id": peer_key[:16],
+                    "name": peer_hostname,
+                    "ips": peer_ips,
+                    "online": peer_online,
+                    "role": peer_role,
+                    "is_self": False
+                })
+            
+            # Filter to online devices for summary
+            online_devices = [d for d in devices if d["online"]]
+            
+            return {
+                "devices": devices,
+                "online_count": len(online_devices),
+                "total_count": len(devices),
+                "primary_hub_online": primary_hub_online,
+                "dev_hub_online": dev_hub_online,
+                "timestamp": datetime.now().isoformat(),
+                "status": "ok"
+            }
+        else:
+            return {
+                "devices": [],
+                "online_count": 0,
+                "total_count": 0,
+                "primary_hub_online": False,
+                "dev_hub_online": False,
+                "timestamp": datetime.now().isoformat(),
+                "status": "tailscale_not_running",
+                "error": result.stderr.strip() or "Tailscale not running"
+            }
+    
+    except FileNotFoundError:
+        return {
+            "devices": [],
+            "online_count": 0,
+            "total_count": 0,
+            "primary_hub_online": False,
+            "dev_hub_online": False,
+            "timestamp": datetime.now().isoformat(),
+            "status": "tailscale_not_installed",
+            "error": "Tailscale binary not found"
+        }
+    except Exception as e:
+        return {
+            "devices": [],
+            "online_count": 0,
+            "total_count": 0,
+            "primary_hub_online": False,
+            "dev_hub_online": False,
+            "timestamp": datetime.now().isoformat(),
+            "status": "error",
+            "error": str(e)
+        }
+
 @router.get("/public/summary")
 async def get_public_system_summary():
     """Lightweight unauthenticated summary for UI gauges (no sensitive data)."""

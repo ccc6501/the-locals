@@ -498,9 +498,10 @@ async def send_room_message(
     new_message = Message(
         room_id=room_id,
         user_id=current_user.id,
-        role=message_data.role,
-        content=message_data.content,
-        metadata=json.dumps(message_data.metadata) if message_data.metadata else None
+        sender=current_user.handle or current_user.display_name or f"User {current_user.id}",
+        text=message_data.content,
+        role="user",  # Default to user role
+        msg_metadata=json.dumps(message_data.metadata) if message_data.metadata else None
     )
     
     db.add(new_message)

@@ -169,7 +169,7 @@ class Message(Base):
     sender = Column(String(100), nullable=False)  # Legacy field
     text = Column(Text, nullable=False)
     role = Column(String(20), default="user")  # user, assistant
-    metadata = Column(JSON, nullable=True)  # attachments, reactions, etc.
+    msg_metadata = Column(JSON, nullable=True)  # attachments, reactions, etc. (renamed from metadata to avoid SQLAlchemy reserved word)
     timestamp = Column(DateTime, default=datetime.utcnow)
 
     # Relationships

@@ -20,12 +20,26 @@ export function CloudPanel({ apiBase }) {
     const loadDirectory = async (path) => {
         setLoading(true);
         try {
-            const response = await fetch(`${apiBase}/api/storage/local/browse?path=${encodeURIComponent(path)}`);
+            // Get auth token
+            const tokenCandidates = ['chatops_token', 'auth_token', 'jwt', 'access_token'];
+            let bearer = null;
+            for (const k of tokenCandidates) {
+                const v = localStorage.getItem(k);
+                if (v) {
+                    bearer = v;
+                    break;
+                }
+            }
+            
+            const headers = {};
+            if (bearer) headers['Authorization'] = `Bearer ${bearer}`;
+            
+            const response = await fetch(`${apiBase}/api/storage/local/browse?path=${encodeURIComponent(path)}`, { headers });
             if (response.ok) {
                 const data = await response.json();
                 setFiles(data.files || []);
             } else {
-                console.error('Failed to load directory:', response.statusText);
+                console.error('Failed to load directory:', response.status, response.statusText);
                 // Fallback to empty
                 setFiles([]);
             }
@@ -102,7 +116,21 @@ export function CloudPanel({ apiBase }) {
 
     const handleDownload = async (file) => {
         try {
-            const response = await fetch(`${apiBase}/api/storage/local/download?file_path=${encodeURIComponent(file.path)}`);
+            // Get auth token
+            const tokenCandidates = ['chatops_token', 'auth_token', 'jwt', 'access_token'];
+            let bearer = null;
+            for (const k of tokenCandidates) {
+                const v = localStorage.getItem(k);
+                if (v) {
+                    bearer = v;
+                    break;
+                }
+            }
+            
+            const headers = {};
+            if (bearer) headers['Authorization'] = `Bearer ${bearer}`;
+            
+            const response = await fetch(`${apiBase}/api/storage/local/download?file_path=${encodeURIComponent(file.path)}`, { headers });
             if (response.ok) {
                 const blob = await response.blob();
                 const url = window.URL.createObjectURL(blob);
@@ -139,12 +167,27 @@ export function CloudPanel({ apiBase }) {
     const performUpload = async (file) => {
         setUploading(true);
         try {
+            // Get auth token
+            const tokenCandidates = ['chatops_token', 'auth_token', 'jwt', 'access_token'];
+            let bearer = null;
+            for (const k of tokenCandidates) {
+                const v = localStorage.getItem(k);
+                if (v) {
+                    bearer = v;
+                    break;
+                }
+            }
+            
             const formData = new FormData();
             formData.append('file', file);
             formData.append('path', currentPath);
 
+            const headers = {};
+            if (bearer) headers['Authorization'] = `Bearer ${bearer}`;
+
             const response = await fetch(`${apiBase}/api/storage/local/upload?path=${encodeURIComponent(currentPath)}`, {
                 method: 'POST',
+                headers,
                 body: formData
             });
 

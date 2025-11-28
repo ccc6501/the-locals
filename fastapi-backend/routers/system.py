@@ -153,6 +153,10 @@ async def get_network_snapshot():
                 peer_ips = peer_data.get("TailscaleIPs", [])
                 peer_online = peer_data.get("Online", False)
                 
+                # Skip Tailscale infrastructure nodes (funnel-ingress-node)
+                if "funnel-ingress-node" in peer_hostname.lower():
+                    continue
+                
                 # Determine peer role based on DNSName
                 peer_role = "client"
                 dns_lower = peer_dnsname.lower()

@@ -45,7 +45,13 @@ def get_network_snapshot():
         
         # Add peers
         for peer_key, peer in status_data.get("Peer", {}).items():
+            peer_hostname = peer.get("HostName", "").lower()
             peer_dnsname = peer.get("DNSName", "").rstrip(".")
+            
+            # Skip Tailscale funnel infrastructure nodes
+            if "funnel-ingress-node" in peer_hostname:
+                continue
+            
             dns_lower = peer_dnsname.lower()
             
             # Determine role based on DNSName

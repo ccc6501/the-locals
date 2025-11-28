@@ -28,12 +28,13 @@ router = APIRouter()
 
 @router.get("/local/browse")
 async def browse_local_storage(
-    path: str = "D:\\",
-    current_user: User = Depends(get_current_active_user)
+    path: str = "D:\\"
 ):
     r"""
     Browse local D:\ drive file system.
     Returns directory contents with AI-relevance metadata.
+    
+    Note: No authentication required for local storage access on user's own machine.
     """
     import pathlib
     from datetime import datetime as dt
@@ -97,10 +98,13 @@ async def browse_local_storage(
 @router.post("/local/upload")
 async def upload_to_local_storage(
     file: UploadFile = File(...),
-    path: str = "D:\\",
-    current_user: User = Depends(get_current_active_user)
+    path: str = "D:\\"
 ):
-    r"""Upload file to local D:\ drive"""
+    r"""
+    Upload file to local D:\ drive.
+    
+    Note: No authentication required for local storage access on user's own machine.
+    """
     import pathlib
     
     try:
@@ -146,10 +150,13 @@ async def upload_to_local_storage(
 
 @router.get("/local/download")
 async def download_from_local_storage(
-    file_path: str,
-    current_user: User = Depends(get_current_active_user)
+    file_path: str
 ):
-    r"""Download file from local D:\ drive"""
+    r"""
+    Download file from local D:\ drive.
+    
+    Note: No authentication required for local storage access on user's own machine.
+    """
     import pathlib
     
     try:

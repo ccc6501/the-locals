@@ -30,10 +30,10 @@ export function CloudPanel({ apiBase }) {
                     break;
                 }
             }
-            
+
             const headers = {};
             if (bearer) headers['Authorization'] = `Bearer ${bearer}`;
-            
+
             const response = await fetch(`${apiBase}/api/storage/local/browse?path=${encodeURIComponent(path)}`, { headers });
             if (response.ok) {
                 const data = await response.json();
@@ -126,10 +126,10 @@ export function CloudPanel({ apiBase }) {
                     break;
                 }
             }
-            
+
             const headers = {};
             if (bearer) headers['Authorization'] = `Bearer ${bearer}`;
-            
+
             const response = await fetch(`${apiBase}/api/storage/local/download?file_path=${encodeURIComponent(file.path)}`, { headers });
             if (response.ok) {
                 const blob = await response.blob();
@@ -177,7 +177,7 @@ export function CloudPanel({ apiBase }) {
                     break;
                 }
             }
-            
+
             const formData = new FormData();
             formData.append('file', file);
             formData.append('path', currentPath);

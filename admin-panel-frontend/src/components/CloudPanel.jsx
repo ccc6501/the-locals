@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { FolderOpen, File, HardDrive, RefreshCw, Search, ChevronRight, FileText, Image as ImageIcon, Video, Music, Archive, Code } from 'lucide-react';
+import { FolderOpen, File, HardDrive, RefreshCw, Search, ChevronRight, FileText, Image as ImageIcon, Video, Music, Archive, Code, Upload, Download } from 'lucide-react';
 
 export function CloudPanel({ apiBase }) {
     const [currentPath, setCurrentPath] = useState('D:\\');
@@ -9,6 +9,9 @@ export function CloudPanel({ apiBase }) {
     const [selectedFile, setSelectedFile] = useState(null);
     const [aiContext, setAiContext] = useState(null);
     const [storageStats, setStorageStats] = useState(null);
+    const [uploading, setUploading] = useState(false);
+    const [uploadProgress, setUploadProgress] = useState(null);
+    const fileInputRef = React.useRef(null);
 
     useEffect(() => {
         loadDirectory(currentPath);
@@ -18,20 +21,15 @@ export function CloudPanel({ apiBase }) {
     const loadDirectory = async (path) => {
         setLoading(true);
         try {
-            // For now, mock the D:\ browsing - backend endpoint would be /api/storage/local/browse
-            // In production, this would call the backend with AI-contextual indexing
-            const mockFiles = [
-                { name: 'Projects', type: 'folder', size: '--', modified: '2024-11-20', aiRelevance: 'high' },
-                { name: 'Documents', type: 'folder', size: '--', modified: '2024-11-18', aiRelevance: 'medium' },
-                { name: 'Code', type: 'folder', size: '--', modified: '2024-11-25', aiRelevance: 'high' },
-                { name: 'Media', type: 'folder', size: '--', modified: '2024-11-10', aiRelevance: 'low' },
-                { name: 'README.md', type: 'file', size: '12 KB', modified: '2024-11-24', aiRelevance: 'high', ext: 'md' },
-                { name: 'config.json', type: 'file', size: '2 KB', modified: '2024-11-23', aiRelevance: 'medium', ext: 'json' },
-                { name: 'data.csv', type: 'file', size: '450 KB', modified: '2024-11-15', aiRelevance: 'low', ext: 'csv' }
-            ];
-            setFiles(mockFiles);
+            const res = await fetch(`${apiBase}/api/storage/local/browse?path=${encodeURIComponent(path)}`);
+            if (!res.ok) {
+                throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+            }
+            const data = await res.json();
+            setFiles(data.files || []);
         } catch (e) {
             console.error('Error loading directory:', e);
+            setFiles([]);
         } finally {
             setLoading(false);
         }
@@ -100,6 +98,70 @@ export function CloudPanel({ apiBase }) {
         }
     };
 
+    const handleUpload = async (event) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+
+        setUploading(true);
+        setUploadProgress(`Uploading ${file.name}...`);
+
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+
+            const res = await fetch(`${apiBase}/api/storage/local/upload?path=${encodeURIComponent(currentPath)}`, {
+                method: 'POST',
+                body: formData
+            });
+
+            if (!res.ok) {
+                const errorText = await res.text();
+                throw new Error(`Upload failed: ${errorText}`);
+            }
+
+            const result = await res.json();
+            setUploadProgress(`✓ Uploaded ${result.filename} (${result.size})`);
+
+            // Refresh directory to show new file
+            await loadDirectory(currentPath);
+
+            setTimeout(() => setUploadProgress(null), 3000);
+        } catch (e) {
+            console.error('Upload error:', e);
+            setUploadProgress(`✗ Upload failed: ${e.message}`);
+            setTimeout(() => setUploadProgress(null), 5000);
+        } finally {
+            setUploading(false);
+            if (fileInputRef.current) {
+                fileInputRef.current.value = '';
+            }
+        }
+    };
+
+    const handleDownload = async (file) => {
+        try {
+            const res = await fetch(`${apiBase}/api/storage/local/download?file_path=${encodeURIComponent(file.path)}`);
+
+            if (!res.ok) {
+                throw new Error(`Download failed: HTTP ${res.status}`);
+            }
+
+            // Create a blob from the response and trigger download
+            const blob = await res.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = file.name;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+        } catch (e) {
+            console.error('Download error:', e);
+            alert(`Download failed: ${e.message}`);
+        }
+    };
+
     return (
         <div className="p-6 space-y-6">
             {/* Storage Stats */}
@@ -158,12 +220,31 @@ export function CloudPanel({ apiBase }) {
                                 className="w-full bg-slate-900/80 border border-slate-700 rounded-lg pl-9 pr-3 py-2 text-[12px] focus:outline-none focus:border-violet-500/70"
                             />
                         </div>
+                        <input
+                            ref={fileInputRef}
+                            type="file"
+                            onChange={handleUpload}
+                            className="hidden"
+                        />
+                        <button
+                            onClick={() => fileInputRef.current?.click()}
+                            disabled={uploading}
+                            className="px-3 py-2 rounded-lg bg-violet-600/20 border border-violet-600/30 text-violet-400 text-[12px] hover:bg-violet-600/30 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                        >
+                            <Upload className="w-3.5 h-3.5" />
+                            Upload
+                        </button>
                         {currentPath !== 'D:\\' && (
                             <button onClick={navigateUp} className="px-3 py-2 rounded-lg bg-slate-800/70 border border-slate-700 text-slate-300 text-[12px] hover:bg-slate-700/70">
                                 Up
                             </button>
                         )}
                     </div>
+                    {uploadProgress && (
+                        <div className="text-[11px] text-slate-400 bg-slate-900/60 border border-slate-700 rounded-lg px-3 py-2">
+                            {uploadProgress}
+                        </div>
+                    )}
                 </div>
 
                 {/* File List */}
@@ -180,24 +261,37 @@ export function CloudPanel({ apiBase }) {
                         </div>
                     )}
                     {!loading && filteredFiles.map((file, idx) => (
-                        <button
+                        <div
                             key={idx}
-                            onClick={() => handleFileClick(file)}
-                            className={`w-full px-4 py-3 flex items-center gap-3 hover:bg-slate-900/60 transition-colors text-left ${selectedFile?.name === file.name ? 'bg-slate-900/80' : ''}`}
+                            className={`w-full px-4 py-3 flex items-center gap-3 hover:bg-slate-900/60 transition-colors ${selectedFile?.name === file.name ? 'bg-slate-900/80' : ''}`}
                         >
-                            {getFileIcon(file)}
-                            <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2">
-                                    <span className="text-[13px] text-slate-300 truncate">{file.name}</span>
-                                    {getAiRelevanceBadge(file.aiRelevance)}
+                            <button
+                                onClick={() => handleFileClick(file)}
+                                className="flex items-center gap-3 flex-1 min-w-0 text-left"
+                            >
+                                {getFileIcon(file)}
+                                <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-[13px] text-slate-300 truncate">{file.name}</span>
+                                        {getAiRelevanceBadge(file.aiRelevance)}
+                                    </div>
+                                    <div className="text-[10px] text-slate-500 flex gap-3">
+                                        <span>{file.size}</span>
+                                        <span>{file.modified}</span>
+                                    </div>
                                 </div>
-                                <div className="text-[10px] text-slate-500 flex gap-3">
-                                    <span>{file.size}</span>
-                                    <span>{file.modified}</span>
-                                </div>
-                            </div>
-                            {file.type === 'folder' && <ChevronRight className="w-3.5 h-3.5 text-slate-600" />}
-                        </button>
+                                {file.type === 'folder' && <ChevronRight className="w-3.5 h-3.5 text-slate-600" />}
+                            </button>
+                            {file.type === 'file' && (
+                                <button
+                                    onClick={() => handleDownload(file)}
+                                    className="p-2 rounded-lg hover:bg-slate-800/70 border border-transparent hover:border-slate-700 transition-colors"
+                                    title="Download file"
+                                >
+                                    <Download className="w-3.5 h-3.5 text-slate-400" />
+                                </button>
+                            )}
+                        </div>
                     ))}
                 </div>
             </div>
@@ -243,8 +337,9 @@ export function CloudPanel({ apiBase }) {
             <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
                 <div className="text-[11px] text-slate-500 leading-relaxed space-y-1">
                     <div>💡 <span className="text-slate-400">AI+ badges indicate files with high contextual relevance for AI workflows.</span></div>
-                    <div>🔍 <span className="text-slate-400">Click files to view AI-generated summaries and related resources.</span></div>
-                    <div>📂 <span className="text-slate-400">Currently browsing local D:\ drive. Cloud storage integration coming soon.</span></div>
+                    <div>� <span className="text-slate-400">Click Upload to add files to the current folder.</span></div>
+                    <div>📥 <span className="text-slate-400">Click the download icon to save files locally.</span></div>
+                    <div>📂 <span className="text-slate-400">Currently browsing local D:\ drive storage.</span></div>
                 </div>
             </div>
         </div>

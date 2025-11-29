@@ -86,8 +86,61 @@ class SimpleChatResponse(BaseModel):
     createdAt: str
 
 
+async def _build_ai_context() -> str:
+    """Build real-time system context for AI responses"""
+    try:
+        # Get network snapshot
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            try:
+                network_resp = await client.get("http://127.0.0.1:8000/api/system/tailscale/snapshot")
+                network_data = network_resp.json() if network_resp.status_code == 200 else {}
+            except Exception:
+                network_data = {}
+            
+            try:
+                system_resp = await client.get("http://127.0.0.1:8000/api/system/public/summary")
+                system_data = system_resp.json() if system_resp.status_code == 200 else {}
+            except Exception:
+                system_data = {}
+        
+        # Build context string
+        context_parts = []
+        
+        # Network context
+        if network_data.get("status") == "ok":
+            devices = network_data.get("devices", [])
+            online_devices = [d for d in devices if d.get("online")]
+            primary_hub = next((d for d in devices if d.get("role") == "primary-hub"), None)
+            dev_hub = next((d for d in devices if d.get("role") == "dev-hub"), None)
+            clients = [d for d in online_devices if d.get("role") == "client"]
+            
+            context_parts.append(f"NETWORK: {len(online_devices)} devices online (total: {len(devices)})")
+            if primary_hub:
+                status = "online" if primary_hub.get("online") else "offline"
+                context_parts.append(f"  - Primary Hub ({primary_hub.get('name')}): {status}")
+            if dev_hub:
+                status = "online" if dev_hub.get("online") else "offline"
+                context_parts.append(f"  - Dev Hub ({dev_hub.get('name')}): {status}")
+            if clients:
+                context_parts.append(f"  - Clients online: {', '.join(d.get('name', 'unknown') for d in clients)}")
+        else:
+            context_parts.append(f"NETWORK: Tailscale not available ({network_data.get('error', 'unknown error')})")
+        
+        # System context
+        if system_data:
+            context_parts.append(f"SYSTEM: CPU {system_data.get('cpu', 'N/A')}%, Memory {system_data.get('memory', 'N/A')}%, Disk {system_data.get('disk', 'N/A')}%")
+        
+        # Storage context (placeholder for future expansion)
+        context_parts.append("STORAGE: D:\\ drive accessible via local file system")
+        
+        return "\n".join(context_parts)
+    
+    except Exception as e:
+        return f"CONTEXT ERROR: {str(e)}"
+
+
 @router.post("/chat", response_model=SimpleChatResponse)
-async def simple_chat(request: SimpleChatRequest):
+async def simple_chat(request: SimpleChatRequest, db: Session = Depends(get_db)):
     """
     Simple chat endpoint for ChatOps console.
     No authentication required, supports OpenAI and Ollama with automatic fallback.
@@ -96,7 +149,7 @@ async def simple_chat(request: SimpleChatRequest):
     
     # Single-provider routing - exactly one provider per request
     if request.provider == "openai":
-        return await _chat_openai_simple(request)
+        return await _chat_openai_simple(request, db)
     elif request.provider == "ollama":
         # Try Ollama first, fallback to OpenAI if it fails
         try:
@@ -112,7 +165,7 @@ async def simple_chat(request: SimpleChatRequest):
                     temperature=request.temperature,
                     config=request.config
                 )
-                response = await _chat_openai_simple(openai_request)
+                response = await _chat_openai_simple(openai_request, db)
                 # Add fallback metadata
                 response.provider = "openai"
                 response.model = f"{response.model} (fallback)"
@@ -124,18 +177,29 @@ async def simple_chat(request: SimpleChatRequest):
         raise HTTPException(status_code=400, detail=f"Unknown provider: {request.provider}")
 
 
-async def _chat_openai_simple(request: SimpleChatRequest) -> SimpleChatResponse:
+async def _chat_openai_simple(request: SimpleChatRequest, db: Session) -> SimpleChatResponse:
     """Call OpenAI API for simple chat with graceful fallbacks.
     Fallback order for models: user-specified -> gpt-4o -> gpt-4o-mini -> gpt-3.5-turbo
     Provides clearer error messages for common failure modes (auth, quota, model not found).
     """
 
-    # Get API key from request or environment
-    api_key = (request.config.api_key if request.config and request.config.api_key else os.getenv("OPENAI_API_KEY"))
+    # Get API key from database first (priority), then environment variable
+    # DB key takes priority over env var
+    db_key = None
+    try:
+        openai_conn = db.query(Connection).filter(Connection.service == "openai").first()
+        if openai_conn and getattr(openai_conn, 'config', None):
+            import json
+            config_data = json.loads(openai_conn.config)
+            db_key = config_data.get("apiKey")
+    except Exception as e:
+        print(f"Warning: Could not retrieve OpenAI key from database: {e}")
+    
+    api_key = db_key or os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise HTTPException(
             status_code=400,
-            detail="OpenAI API key required. Provide in config.api_key or set OPENAI_API_KEY environment variable."
+            detail="OpenAI API key required. Set it in Connections > OpenAI or set OPENAI_API_KEY environment variable."
         )
 
     # Updated priority list; allow env override OPENAI_MODEL_PRIORITY (comma-separated)
@@ -151,6 +215,9 @@ async def _chat_openai_simple(request: SimpleChatRequest) -> SimpleChatResponse:
         if m not in seen:
             seen.add(m)
             models_to_try.append(m)
+
+    # Build real-time context for AI
+    context = await _build_ai_context()
 
     last_error = None
     client = OpenAI(api_key=api_key)
@@ -173,7 +240,12 @@ async def _chat_openai_simple(request: SimpleChatRequest) -> SimpleChatResponse:
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are The Local, a helpful AI assistant for a Tailscale-powered home hub. Be friendly, concise, and helpful. You can answer questions about the system, help manage the network, or just chat."
+                        "content": f"""You are The Local, a helpful AI assistant for a Tailscale-powered home hub. Be friendly, concise, and helpful. You can answer questions about the system, help manage the network, or just chat.
+
+Current system context (use this for accurate answers):
+{context}
+
+When asked about the network, always use the real device data above. Never make up device counts or names."""
                     },
                     {"role": "user", "content": request.message}
                 ],
@@ -221,6 +293,9 @@ async def _chat_ollama_simple(request: SimpleChatRequest) -> SimpleChatResponse:
         model = request.config.ollama_model or request.config.model
     model = model or "llama3"
     
+    # Build real-time context for AI
+    context = await _build_ai_context()
+    
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(
@@ -230,7 +305,12 @@ async def _chat_ollama_simple(request: SimpleChatRequest) -> SimpleChatResponse:
                     "messages": [
                         {
                             "role": "system",
-                            "content": "You are The Local, a helpful AI assistant for a Tailscale-powered home hub. Be friendly, concise, and helpful. You can answer questions about the system, help manage the network, or just chat."
+                            "content": f"""You are The Local, a helpful AI assistant for a Tailscale-powered home hub. Be friendly, concise, and helpful. You can answer questions about the system, help manage the network, or just chat.
+
+Current system context (use this for accurate answers):
+{context}
+
+When asked about the network, always use the real device data above. Never make up device counts or names."""
                         },
                         {
                             "role": "user",
@@ -572,14 +652,25 @@ class ProviderHealthResponse(BaseModel):
 
 
 @router.get("/health")
-async def chat_health(ollama_url: str = "http://localhost:11434"):
+async def chat_health(ollama_url: str = "http://localhost:11434", db: Session = Depends(get_db)):
     """Lightweight health endpoint for ChatOps console.
     Returns provider status codes without performing full chat calls.
     openai: 'key-missing' | 'ok'
     ollama: 'ok' | 'offline' | 'error'
     """
-    # OpenAI status: just check key presence (avoid token billing on health)
-    openai_key = os.getenv("OPENAI_API_KEY")
+    # OpenAI status: check database key first (priority), then env var
+    # DB key takes priority over env var
+    import json
+    db_key = None
+    try:
+        openai_conn = db.query(Connection).filter(Connection.service == "openai").first()
+        if openai_conn and getattr(openai_conn, 'config', None):
+            config_data = json.loads(openai_conn.config)
+            db_key = config_data.get("apiKey")
+    except Exception:
+        pass
+    
+    openai_key = db_key or os.getenv("OPENAI_API_KEY")
     openai_status = "key-missing" if not openai_key else "ok"
 
     # Ollama status: attempt a quick version or tags request

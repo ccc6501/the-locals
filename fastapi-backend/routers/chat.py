@@ -73,6 +73,7 @@ class SimpleChatRequest(BaseModel):
     provider: str = "openai"
     temperature: float = 0.7
     config: Optional[ChatConfig] = None
+    thread_id: Optional[int] = None  # Optional thread/room ID for message persistence
 
 
 class SimpleChatResponse(BaseModel):
@@ -153,7 +154,7 @@ async def simple_chat(request: SimpleChatRequest, db: Session = Depends(get_db))
     elif request.provider == "ollama":
         # Try Ollama first, fallback to OpenAI if it fails
         try:
-            return await _chat_ollama_simple(request)
+            return await _chat_ollama_simple(request, db)
         except HTTPException as e:
             # If Ollama is unavailable (503) or model missing, fallback to OpenAI
             if e.status_code in [503, 404]:
@@ -255,6 +256,16 @@ When asked about the network, always use the real device data above. Never make 
             reply_text = response.choices[0].message.content or "No response from OpenAI"
 
             update_ai_status("openai", "online")
+            
+            # Persist assistant response if thread_id provided (Phase 1)
+            if request.thread_id:
+                persist_assistant_message(
+                    thread_id=request.thread_id,
+                    text=reply_text,
+                    db=db,
+                    sender="TL"
+                )
+            
             return SimpleChatResponse(
                 role="assistant",
                 text=reply_text,
@@ -282,7 +293,7 @@ When asked about the network, always use the real device data above. Never make 
     raise HTTPException(status_code=500, detail=f"OpenAI API error (all fallbacks failed): {repr(last_error)}")
 
 
-async def _chat_ollama_simple(request: SimpleChatRequest) -> SimpleChatResponse:
+async def _chat_ollama_simple(request: SimpleChatRequest, db: Session) -> SimpleChatResponse:
     """Call Ollama API for simple chat with model selection"""
     
     base_url = (request.config.base_url if request.config else None) or "http://localhost:11434"
@@ -330,6 +341,15 @@ When asked about the network, always use the real device data above. Never make 
             
             # Update AI status cache
             update_ai_status("ollama", "online")
+            
+            # Persist assistant response if thread_id provided (Phase 1)
+            if request.thread_id:
+                persist_assistant_message(
+                    thread_id=request.thread_id,
+                    text=reply_text,
+                    db=db,
+                    sender="TL"
+                )
             
             # Return with metadata - NO provider/model suffix in text
             return SimpleChatResponse(
@@ -644,6 +664,57 @@ def update_ai_status(provider: str, status: str):
     """Update global AI status cache"""
     global _last_ai_status
     _last_ai_status = {"provider": provider, "status": status}
+
+
+def persist_assistant_message(
+    thread_id: int,
+    text: str,
+    db: Session,
+    sender: str = "TL"
+) -> Optional[Message]:
+    """
+    Persist an assistant's reply to the database.
+    
+    Args:
+        thread_id: The thread/room ID to save the message to
+        text: The assistant's response text
+        db: Database session
+        sender: Sender name/tag (default: "TL" for The Local)
+    
+    Returns:
+        The created Message object, or None if thread doesn't exist
+    """
+    try:
+        # Verify thread exists
+        thread = db.query(Thread).filter(Thread.id == thread_id).first()
+        if not thread:
+            print(f"[persist_message] Thread {thread_id} not found, skipping persistence")
+            return None
+        
+        # Create message with user_id=None for assistant messages
+        message = Message(
+            thread_id=thread_id,
+            user_id=None,  # Assistant messages have no user_id
+            sender=sender,
+            text=text.strip(),
+            timestamp=datetime.utcnow()
+        )
+        
+        db.add(message)
+        db.commit()
+        db.refresh(message)
+        
+        # Update thread's updated_at timestamp
+        thread.updated_at = datetime.utcnow()
+        db.commit()
+        
+        print(f"[persist_message] Saved assistant message {message.id} to thread {thread_id}")
+        return message
+    
+    except Exception as e:
+        print(f"[persist_message] Error saving message: {e}")
+        db.rollback()
+        return None
 
 
 # --- ChatOps health endpoint ---

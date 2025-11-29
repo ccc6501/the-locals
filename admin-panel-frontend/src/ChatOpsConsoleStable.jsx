@@ -101,7 +101,7 @@ const ChatOpsConsoleStable = () => {
     const [isSending, setIsSending] = useState(false);
     const messagesContainerRef = useRef(null);
     const inputRef = useRef(null);
-    
+
     // Rooms (persistent from /api/rooms) - now from context
     const { rooms, activeRoomId, setActiveRoomId, loading: roomsLoading } = useRoomsContext();
 
@@ -173,13 +173,13 @@ const ChatOpsConsoleStable = () => {
     // Load messages when active room changes
     useEffect(() => {
         if (!activeRoomId) return;
-        
+
         const loadRoomMessages = async () => {
             try {
                 const res = await fetch(`/api/rooms/${activeRoomId}/messages?limit=50`);
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const dbMessages = await res.json();
-                
+
                 // Transform DB messages to UI format: {id, thread_id, user_id, sender, text, timestamp} → {id, role, authorTag, text, createdAt}
                 const uiMessages = dbMessages.map(msg => ({
                     id: `msg-${msg.id}`,
@@ -188,14 +188,14 @@ const ChatOpsConsoleStable = () => {
                     text: msg.text,
                     createdAt: msg.timestamp,
                 }));
-                
+
                 setMessages(uiMessages);
             } catch (err) {
                 console.error('Failed to load room messages:', err);
                 pushError('Could not load room messages');
             }
         };
-        
+
         loadRoomMessages();
     }, [activeRoomId]);
 
@@ -303,12 +303,12 @@ const ChatOpsConsoleStable = () => {
         if (provider === 'openai' && !openaiKey) effectiveProvider = 'ollama';
         let selectedModel = effectiveProvider === 'openai' ? openaiModel : ollamaModel;
         if (effectiveProvider === 'ollama' && (!selectedModel || !ollamaModels.includes(selectedModel))) { effectiveProvider = 'openai'; selectedModel = openaiModel; }
-        const payload = { 
-            message: text, 
-            provider: effectiveProvider, 
-            temperature: temp, 
+        const payload = {
+            message: text,
+            provider: effectiveProvider,
+            temperature: temp,
             thread_id: activeRoomId, // Include room ID for persistence
-            config: effectiveProvider === 'openai' ? { api_key: openaiKey || undefined, model: selectedModel } : { base_url: ollamaUrl, model: selectedModel } 
+            config: effectiveProvider === 'openai' ? { api_key: openaiKey || undefined, model: selectedModel } : { base_url: ollamaUrl, model: selectedModel }
         };
         const res = await fetch('/api/chat/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -322,13 +322,13 @@ const ChatOpsConsoleStable = () => {
             pushError('No active room selected');
             return;
         }
-        
+
         setIsSending(true);
         const userMsg = { id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`, role: 'user', authorTag: 'CC', text, createdAt: new Date().toISOString() };
         setMessages(prev => [...prev, userMsg]);
         setDraftMessage('');
         if (inputRef.current) setTimeout(() => inputRef.current && inputRef.current.blur(), 0);
-        
+
         try {
             // Persist user message to database
             const persistRes = await fetch(`/api/rooms/${activeRoomId}/messages`, {
@@ -337,7 +337,7 @@ const ChatOpsConsoleStable = () => {
                 body: JSON.stringify({ text })
             });
             if (!persistRes.ok) throw new Error(`Failed to persist user message: HTTP ${persistRes.status}`);
-            
+
             // Send to chat endpoint (assistant reply will be auto-persisted via thread_id)
             const reply = await sendMessageToBackend(text);
             const assistantText = getDisplayText(reply);
@@ -565,37 +565,37 @@ const ChatOpsConsoleStable = () => {
                     <div className="chat-scroll-area" ref={messagesContainerRef}>
                         {activeView === 'dashboard' && <DashboardPanel recentMessages={messages} logs={logs} />}
                         {activeView === 'connections' && (
-                        <ConnectionsPanel
-                            provider={provider}
-                            setProvider={setProvider}
-                            openaiKey={openaiKey}
-                            setOpenaiKey={setOpenaiKey}
-                            openaiModel={openaiModel}
-                            setOpenaiModel={setOpenaiModel}
-                            ollamaUrl={ollamaUrl}
-                            setOllamaUrl={setOllamaUrl}
-                            ollamaModel={ollamaModel}
-                            setOllamaModel={setOllamaModel}
-                            ollamaModels={ollamaModels}
-                            ollamaModelsLoading={ollamaModelsLoading}
-                            refreshOllamaModels={refreshOllamaModels}
-                            temp={temp}
-                            setTemp={setTemp}
-                            providerMeta={providerMeta}
-                            cloudPath={cloudPath}
-                            setCloudPath={setCloudPath}
-                            cloudEndpoint={cloudEndpoint}
-                            setCloudEndpoint={setCloudEndpoint}
-                            tailnetStats={tailnetStats}
-                            tailnetLoading={tailnetLoading}
-                            tailnetError={tailnetError}
-                            refreshTailnetStats={refreshTailnetStats}
-                            apiBase={API_BASE}
-                        />
-                    )}
-                    {activeView === 'system' && <SystemPanel tailnetStats={tailnetStats} refreshTailnetStats={refreshTailnetStats} exitNodeChanging={tailnetLoading} setExitNodeChanging={setTailnetLoading} />}
-                    {activeView === 'cloud' && <CloudPanel apiBase={API_BASE} />}
-                    {activeView !== 'chat' && activeView !== 'connections' && activeView !== 'dashboard' && activeView !== 'system' && activeView !== 'cloud' && <ViewPlaceholder view={activeView} />}
+                            <ConnectionsPanel
+                                provider={provider}
+                                setProvider={setProvider}
+                                openaiKey={openaiKey}
+                                setOpenaiKey={setOpenaiKey}
+                                openaiModel={openaiModel}
+                                setOpenaiModel={setOpenaiModel}
+                                ollamaUrl={ollamaUrl}
+                                setOllamaUrl={setOllamaUrl}
+                                ollamaModel={ollamaModel}
+                                setOllamaModel={setOllamaModel}
+                                ollamaModels={ollamaModels}
+                                ollamaModelsLoading={ollamaModelsLoading}
+                                refreshOllamaModels={refreshOllamaModels}
+                                temp={temp}
+                                setTemp={setTemp}
+                                providerMeta={providerMeta}
+                                cloudPath={cloudPath}
+                                setCloudPath={setCloudPath}
+                                cloudEndpoint={cloudEndpoint}
+                                setCloudEndpoint={setCloudEndpoint}
+                                tailnetStats={tailnetStats}
+                                tailnetLoading={tailnetLoading}
+                                tailnetError={tailnetError}
+                                refreshTailnetStats={refreshTailnetStats}
+                                apiBase={API_BASE}
+                            />
+                        )}
+                        {activeView === 'system' && <SystemPanel tailnetStats={tailnetStats} refreshTailnetStats={refreshTailnetStats} exitNodeChanging={tailnetLoading} setExitNodeChanging={setTailnetLoading} />}
+                        {activeView === 'cloud' && <CloudPanel apiBase={API_BASE} />}
+                        {activeView !== 'chat' && activeView !== 'connections' && activeView !== 'dashboard' && activeView !== 'system' && activeView !== 'cloud' && <ViewPlaceholder view={activeView} />}
                     </div>
                 )}
             </main>

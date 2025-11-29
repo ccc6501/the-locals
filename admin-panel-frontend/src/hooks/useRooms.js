@@ -20,7 +20,7 @@ export function useRooms() {
             }
             const data = await res.json();
             setRooms(data || []);
-            
+
             // Set default active room to first room if not already set
             if (!activeRoomId && data && data.length > 0) {
                 setActiveRoomId(data[0].id);

@@ -1,50 +1,16 @@
 // admin-panel-frontend/src/ChatRoomList.jsx
-import React, { useEffect, useState } from "react";
+import React from "react";
 import { MessageSquare, Plus, Loader2 } from "lucide-react";
 
-// Auto-detect API base URL - use same host as frontend for remote access
-const getApiBase = () => {
-    const hostname = window.location.hostname;
-    if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
-        return `http://${hostname}:8000`;
-    }
-    return "http://localhost:8000";
-};
-
-const API_BASE = getApiBase();
-
-const ChatRoomList = ({ currentRoom, onSelectRoom }) => {
-    const [rooms, setRooms] = useState([]);
-    const [isLoading, setIsLoading] = useState(true);
-    const [error, setError] = useState(null);
-
-    useEffect(() => {
-        let cancelled = false;
-
-        const loadRooms = async () => {
-            setIsLoading(true);
-            try {
-                const res = await fetch(`${API_BASE}/chat/rooms`);
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                const data = await res.json();
-                if (cancelled) return;
-                setRooms(data);
-                setError(null);
-            } catch (err) {
-                if (cancelled) return;
-                console.error("Failed to load rooms", err);
-                setError("Could not load rooms");
-            } finally {
-                if (!cancelled) setIsLoading(false);
-            }
-        };
-
-        loadRooms();
-        return () => {
-            cancelled = true;
-        };
-    }, []);
-
+/**
+ * ChatRoomList - Display list of chat rooms (now prop-based, no internal fetch)
+ * @param {Array} rooms - List of room objects from useRooms hook
+ * @param {number} activeRoomId - Currently selected room ID
+ * @param {Function} onSelectRoom - Callback when room is clicked
+ * @param {boolean} loading - Loading state
+ * @param {string} error - Error message if any
+ */
+const ChatRoomList = ({ rooms = [], activeRoomId, onSelectRoom, loading = false, error = null }) => {
     const handleSelect = (room) => {
         if (!onSelectRoom) return;
         onSelectRoom(room);
@@ -68,20 +34,20 @@ const ChatRoomList = ({ currentRoom, onSelectRoom }) => {
                 </button>
             </div>
 
-            {isLoading && (
+            {loading && (
                 <div className="flex items-center gap-2 text-xs text-slate-500 py-2">
                     <Loader2 className="w-3 h-3 animate-spin" />
                     Loading rooms…
                 </div>
             )}
 
-            {error && !isLoading && (
+            {error && !loading && (
                 <div className="text-xs text-rose-400 py-2">
                     {error}
                 </div>
             )}
 
-            {!isLoading && !error && rooms.length === 0 && (
+            {!loading && !error && rooms.length === 0 && (
                 <div className="text-xs text-slate-500 py-2">
                     No rooms yet.
                 </div>
@@ -89,7 +55,7 @@ const ChatRoomList = ({ currentRoom, onSelectRoom }) => {
 
             <div className="flex flex-col gap-1">
                 {rooms.map((room) => {
-                    const isActive = currentRoom && currentRoom.id === room.id;
+                    const isActive = activeRoomId && activeRoomId === room.id;
                     return (
                         <button
                             key={room.id}

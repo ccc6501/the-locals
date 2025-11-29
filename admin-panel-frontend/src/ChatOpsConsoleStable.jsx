@@ -4,6 +4,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useChatPersistence } from './hooks/useChatPersistence';
 import { useProviderStatus } from './hooks/useProviderStatus';
+import { useRooms } from './hooks/useRooms';
 import { ErrorToasts } from './components/ErrorToasts';
 import { ConnectionsPanel } from './components/ConnectionsPanel';
 import { DashboardPanel } from './components/DashboardPanel';
@@ -99,6 +100,9 @@ const ChatOpsConsoleStable = () => {
     const [isSending, setIsSending] = useState(false);
     const messagesContainerRef = useRef(null);
     const inputRef = useRef(null);
+    
+    // Rooms (persistent from /api/rooms)
+    const { rooms, activeRoomId, setActiveRoomId, loading: roomsLoading, error: roomsError, refreshRooms } = useRooms(API_BASE);
 
     // Views
     const [activeView, setActiveView] = useState('chat');
@@ -164,6 +168,35 @@ const ChatOpsConsoleStable = () => {
 
     // Scroll
     useEffect(() => { const c = messagesContainerRef.current; if (c) c.scrollTop = c.scrollHeight; }, [messages]);
+
+    // Load messages when active room changes
+    useEffect(() => {
+        if (!activeRoomId || !API_BASE) return;
+        
+        const loadRoomMessages = async () => {
+            try {
+                const res = await fetch(`${API_BASE}/api/rooms/${activeRoomId}/messages?limit=50`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const dbMessages = await res.json();
+                
+                // Transform DB messages to UI format: {id, thread_id, user_id, sender, text, timestamp} → {id, role, authorTag, text, createdAt}
+                const uiMessages = dbMessages.map(msg => ({
+                    id: `msg-${msg.id}`,
+                    role: msg.sender === 'CC' ? 'user' : 'assistant',
+                    authorTag: msg.sender || 'TL',
+                    text: msg.text,
+                    createdAt: msg.timestamp,
+                }));
+                
+                setMessages(uiMessages);
+            } catch (err) {
+                console.error('Failed to load room messages:', err);
+                pushError('Could not load room messages');
+            }
+        };
+        
+        loadRoomMessages();
+    }, [activeRoomId, API_BASE]);
 
     // Resolve API base dynamically on mount then trigger initial fetches
     useEffect(() => {
@@ -269,7 +302,13 @@ const ChatOpsConsoleStable = () => {
         if (provider === 'openai' && !openaiKey) effectiveProvider = 'ollama';
         let selectedModel = effectiveProvider === 'openai' ? openaiModel : ollamaModel;
         if (effectiveProvider === 'ollama' && (!selectedModel || !ollamaModels.includes(selectedModel))) { effectiveProvider = 'openai'; selectedModel = openaiModel; }
-        const payload = { message: text, provider: effectiveProvider, temperature: temp, config: effectiveProvider === 'openai' ? { api_key: openaiKey || undefined, model: selectedModel } : { base_url: ollamaUrl, model: selectedModel } };
+        const payload = { 
+            message: text, 
+            provider: effectiveProvider, 
+            temperature: temp, 
+            thread_id: activeRoomId, // Include room ID for persistence
+            config: effectiveProvider === 'openai' ? { api_key: openaiKey || undefined, model: selectedModel } : { base_url: ollamaUrl, model: selectedModel } 
+        };
         const res = await fetch(`${API_BASE}/api/chat/chat`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
@@ -278,12 +317,27 @@ const ChatOpsConsoleStable = () => {
     const handleSend = async () => {
         const text = draftMessage.trim();
         if (!text || isSending) return;
+        if (!activeRoomId) {
+            pushError('No active room selected');
+            return;
+        }
+        
         setIsSending(true);
         const userMsg = { id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`, role: 'user', authorTag: 'CC', text, createdAt: new Date().toISOString() };
         setMessages(prev => [...prev, userMsg]);
         setDraftMessage('');
         if (inputRef.current) setTimeout(() => inputRef.current && inputRef.current.blur(), 0);
+        
         try {
+            // Persist user message to database
+            const persistRes = await fetch(`${API_BASE}/api/rooms/${activeRoomId}/messages`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text })
+            });
+            if (!persistRes.ok) throw new Error(`Failed to persist user message: HTTP ${persistRes.status}`);
+            
+            // Send to chat endpoint (assistant reply will be auto-persisted via thread_id)
             const reply = await sendMessageToBackend(text);
             const assistantText = getDisplayText(reply);
             const assistantMsg = { id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`, role: 'assistant', authorTag: 'TL', text: assistantText, createdAt: new Date().toISOString() };

@@ -4,7 +4,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useChatPersistence } from './hooks/useChatPersistence';
 import { useProviderStatus } from './hooks/useProviderStatus';
-import { useRooms } from './hooks/useRooms';
+import { useRoomsContext } from './context/RoomsContext';
 import ChatRoomList from './ChatRoomList';
 import { ErrorToasts } from './components/ErrorToasts';
 import { ConnectionsPanel } from './components/ConnectionsPanel';
@@ -102,8 +102,8 @@ const ChatOpsConsoleStable = () => {
     const messagesContainerRef = useRef(null);
     const inputRef = useRef(null);
     
-    // Rooms (persistent from /api/rooms)
-    const { rooms, activeRoomId, setActiveRoomId, loading: roomsLoading, refreshRooms } = useRooms();
+    // Rooms (persistent from /api/rooms) - now from context
+    const { rooms, activeRoomId, setActiveRoomId, loading: roomsLoading } = useRoomsContext();
 
     // Views
     const [activeView, setActiveView] = useState('chat');
@@ -486,6 +486,36 @@ const ChatOpsConsoleStable = () => {
                                     <span className="capitalize">{view}</span>
                                 </button>
                             ))}
+
+                            {/* Rooms section - only visible on mobile */}
+                            <div className="mt-6 pt-4 border-t border-slate-800/60 lg:hidden">
+                                <div className="text-xs tracking-[0.2em] uppercase text-slate-500 mb-3 px-2">
+                                    Rooms
+                                </div>
+                                {rooms.length === 0 && (
+                                    <div className="text-xs text-slate-400 px-2 py-2">No rooms yet.</div>
+                                )}
+                                {rooms.map((room) => (
+                                    <button
+                                        key={room.id}
+                                        className={
+                                            "w-full text-left text-sm px-3 py-2.5 rounded-lg mb-1 transition-all flex items-center gap-2 " +
+                                            (room.id === activeRoomId
+                                                ? "bg-slate-800 text-slate-50 border border-purple-500/60"
+                                                : "bg-transparent text-slate-300 hover:bg-slate-800/50")
+                                        }
+                                        onClick={() => {
+                                            setActiveRoomId(room.id);
+                                            setActiveView('chat'); // Switch to chat view
+                                            setMobileMenuOpen(false); // Close drawer
+                                        }}
+                                    >
+                                        <MessageSquare className="w-4 h-4 text-slate-400" />
+                                        <span className="flex-1 truncate">{room.name || `Room ${room.id}`}</span>
+                                        <span className="text-[10px] text-slate-500 uppercase">{room.id}</span>
+                                    </button>
+                                ))}
+                            </div>
                         </nav>
                     </div>
                 </>
@@ -494,8 +524,8 @@ const ChatOpsConsoleStable = () => {
             <main className="chat-app-main">
                 {activeView === 'chat' ? (
                     <div className="flex h-full gap-0">
-                        {/* Room List Sidebar */}
-                        <aside className="w-64 min-w-[220px] max-w-[280px] border-r border-slate-800/60 overflow-y-auto p-3">
+                        {/* Room List Sidebar - hidden on mobile (< lg), visible on desktop (lg+) */}
+                        <aside className="hidden lg:block lg:w-64 lg:min-w-[220px] lg:max-w-[280px] border-r border-slate-800/60 overflow-y-auto p-3">
                             <ChatRoomList
                                 rooms={rooms}
                                 activeRoomId={activeRoomId}

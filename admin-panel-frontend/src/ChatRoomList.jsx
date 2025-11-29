@@ -11,9 +11,9 @@ import { MessageSquare, Plus, Loader2 } from "lucide-react";
  * @param {string} error - Error message if any
  */
 const ChatRoomList = ({ rooms = [], activeRoomId, onSelectRoom, loading = false, error = null }) => {
-    const handleSelect = (room) => {
+    const handleSelect = (roomId) => {
         if (!onSelectRoom) return;
-        onSelectRoom(room);
+        onSelectRoom(roomId);
     };
 
     return (
@@ -60,7 +60,7 @@ const ChatRoomList = ({ rooms = [], activeRoomId, onSelectRoom, loading = false,
                         <button
                             key={room.id}
                             type="button"
-                            onClick={() => handleSelect(room)}
+                            onClick={() => handleSelect(room.id)}
                             className={
                                 "w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs text-left transition-all " +
                                 (isActive

@@ -5,6 +5,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useChatPersistence } from './hooks/useChatPersistence';
 import { useProviderStatus } from './hooks/useProviderStatus';
 import { useRooms } from './hooks/useRooms';
+import ChatRoomList from './ChatRoomList';
 import { ErrorToasts } from './components/ErrorToasts';
 import { ConnectionsPanel } from './components/ConnectionsPanel';
 import { DashboardPanel } from './components/DashboardPanel';
@@ -102,7 +103,7 @@ const ChatOpsConsoleStable = () => {
     const inputRef = useRef(null);
     
     // Rooms (persistent from /api/rooms)
-    const { rooms, activeRoomId, setActiveRoomId, loading: roomsLoading, error: roomsError, refreshRooms } = useRooms(API_BASE);
+    const { rooms, activeRoomId, setActiveRoomId, loading: roomsLoading, refreshRooms } = useRooms();
 
     // Views
     const [activeView, setActiveView] = useState('chat');
@@ -171,11 +172,11 @@ const ChatOpsConsoleStable = () => {
 
     // Load messages when active room changes
     useEffect(() => {
-        if (!activeRoomId || !API_BASE) return;
+        if (!activeRoomId) return;
         
         const loadRoomMessages = async () => {
             try {
-                const res = await fetch(`${API_BASE}/api/rooms/${activeRoomId}/messages?limit=50`);
+                const res = await fetch(`/api/rooms/${activeRoomId}/messages?limit=50`);
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const dbMessages = await res.json();
                 
@@ -196,7 +197,7 @@ const ChatOpsConsoleStable = () => {
         };
         
         loadRoomMessages();
-    }, [activeRoomId, API_BASE]);
+    }, [activeRoomId]);
 
     // Resolve API base dynamically on mount then trigger initial fetches
     useEffect(() => {
@@ -309,7 +310,7 @@ const ChatOpsConsoleStable = () => {
             thread_id: activeRoomId, // Include room ID for persistence
             config: effectiveProvider === 'openai' ? { api_key: openaiKey || undefined, model: selectedModel } : { base_url: ollamaUrl, model: selectedModel } 
         };
-        const res = await fetch(`${API_BASE}/api/chat/chat`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        const res = await fetch('/api/chat/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
     };
@@ -330,7 +331,7 @@ const ChatOpsConsoleStable = () => {
         
         try {
             // Persist user message to database
-            const persistRes = await fetch(`${API_BASE}/api/rooms/${activeRoomId}/messages`, {
+            const persistRes = await fetch(`/api/rooms/${activeRoomId}/messages`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ text })
@@ -491,10 +492,49 @@ const ChatOpsConsoleStable = () => {
             )}
 
             <main className="chat-app-main">
-                <div className="chat-scroll-area" ref={messagesContainerRef}>
-                    {activeView === 'chat' && renderMessages()}
-                    {activeView === 'dashboard' && <DashboardPanel recentMessages={messages} logs={logs} />}
-                    {activeView === 'connections' && (
+                {activeView === 'chat' ? (
+                    <div className="flex h-full gap-0">
+                        {/* Room List Sidebar */}
+                        <aside className="w-64 min-w-[220px] max-w-[280px] border-r border-slate-800/60 overflow-y-auto p-3">
+                            <ChatRoomList
+                                rooms={rooms}
+                                activeRoomId={activeRoomId}
+                                onSelectRoom={setActiveRoomId}
+                                loading={roomsLoading}
+                            />
+                        </aside>
+
+                        {/* Chat Main Pane */}
+                        <div className="flex-1 flex flex-col overflow-hidden">
+                            <div className="chat-scroll-area flex-1" ref={messagesContainerRef}>
+                                {renderMessages()}
+                            </div>
+                            <div className="chat-input-wrapper">
+                                <div className="chat-input-inner">
+                                    <textarea className="chat-input-field" rows={1} placeholder="Message the room..." value={draftMessage} onChange={e => setDraftMessage(e.target.value)} onKeyDown={handleKeyDown} ref={inputRef} />
+                                    <button className="chat-send-button" disabled={isSending || !draftMessage.trim()} onClick={handleSend} aria-label="Send message">
+                                        <span className="chat-send-icon">➤</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            if (!messages.length) return;
+                                            if (!window.confirm('Clear all chat history?')) return;
+                                            const welcome = { id: 'welcome', role: 'assistant', authorTag: 'TL', text: 'History cleared. Fresh start! Ask me anything.', createdAt: new Date().toISOString() };
+                                            setMessages([welcome]);
+                                            localStorage.removeItem('theLocal.chatMessages');
+                                            setErrors(prev => [{ id: `e-${Date.now()}`, message: 'Chat history cleared' }, ...prev]);
+                                        }}
+                                        className="ml-2 px-2 py-1 rounded-lg text-[10px] font-semibold bg-slate-800/70 border border-slate-700 text-slate-300 hover:bg-slate-700/70 active:scale-95"
+                                    >Clear</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="chat-scroll-area" ref={messagesContainerRef}>
+                        {activeView === 'dashboard' && <DashboardPanel recentMessages={messages} logs={logs} />}
+                        {activeView === 'connections' && (
                         <ConnectionsPanel
                             provider={provider}
                             setProvider={setProvider}
@@ -526,28 +566,6 @@ const ChatOpsConsoleStable = () => {
                     {activeView === 'system' && <SystemPanel tailnetStats={tailnetStats} refreshTailnetStats={refreshTailnetStats} exitNodeChanging={tailnetLoading} setExitNodeChanging={setTailnetLoading} />}
                     {activeView === 'cloud' && <CloudPanel apiBase={API_BASE} />}
                     {activeView !== 'chat' && activeView !== 'connections' && activeView !== 'dashboard' && activeView !== 'system' && activeView !== 'cloud' && <ViewPlaceholder view={activeView} />}
-                </div>
-                {activeView === 'chat' && (
-                    <div className="chat-input-wrapper">
-                        <div className="chat-input-inner">
-                            <textarea className="chat-input-field" rows={1} placeholder="Message the room..." value={draftMessage} onChange={e => setDraftMessage(e.target.value)} onKeyDown={handleKeyDown} ref={inputRef} />
-                            <button className="chat-send-button" disabled={isSending || !draftMessage.trim()} onClick={handleSend} aria-label="Send message">
-                                <span className="chat-send-icon">➤</span>
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    if (!messages.length) return;
-                                    if (!window.confirm('Clear all chat history?')) return;
-                                    const welcome = { id: 'welcome', role: 'assistant', authorTag: 'TL', text: 'History cleared. Fresh start! Ask me anything.', createdAt: new Date().toISOString() };
-                                    setMessages([welcome]);
-                                    localStorage.removeItem('theLocal.chatMessages');
-                                    setErrors(prev => [{ id: `e-${Date.now()}`, message: 'Chat history cleared' }, ...prev]);
-                                }}
-                                className="ml-2 px-2 py-1 rounded-lg text-[10px] font-semibold bg-slate-800/70 border border-slate-700 text-slate-300 hover:bg-slate-700/70 active:scale-95"
-                            >Clear</button>
-                        </div>
-                        {/* Error toasts rendered globally */}
                     </div>
                 )}
             </main>

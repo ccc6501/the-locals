@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 
 from database import get_db
-from models import User, Device, Notification, UserPermission
+from models import User, Device, Notification
 from schemas import (
     UserResponse, UserCreate, UserUpdate,
     UserProfileResponse, UserProfileUpdate, UserProfileCreate,

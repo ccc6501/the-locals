@@ -1,5 +1,5 @@
 // admin-panel-frontend/src/hooks/useRooms.js
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
 /**
  * Custom hook for managing persistent chat rooms from /api/rooms
@@ -10,7 +10,7 @@ export function useRooms() {
     const [activeRoomId, setActiveRoomId] = useState(null);
     const [loading, setLoading] = useState(false);
 
-    const loadRooms = async () => {
+    const loadRooms = useCallback(async () => {
         setLoading(true);
         try {
             const res = await fetch('/api/rooms');
@@ -39,19 +39,23 @@ export function useRooms() {
             setRooms(roomsWithMembers);
 
             // Set default active room to first room if not already set
-            if (!activeRoomId && roomsWithMembers && roomsWithMembers.length > 0) {
-                setActiveRoomId(roomsWithMembers[0].id);
-            }
+            // Use functional update to avoid stale closure
+            setActiveRoomId((currentActiveId) => {
+                if (!currentActiveId && roomsWithMembers && roomsWithMembers.length > 0) {
+                    return roomsWithMembers[0].id;
+                }
+                return currentActiveId;
+            });
         } catch (err) {
             console.error('Failed to load rooms:', err);
         } finally {
             setLoading(false);
         }
-    };
+    }, []); // No dependencies - loadRooms is stable
 
     useEffect(() => {
         loadRooms();
-    }, []);
+    }, [loadRooms]);
 
     const createRoom = async (name, type = 'room') => {
         try {

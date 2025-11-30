@@ -74,6 +74,10 @@ class Thread(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Phase 6: Room settings
+    ai_enabled = Column(Boolean, default=True)  # Allow AI responses in this room
+    notifications_enabled = Column(Boolean, default=True)  # Enable notifications for room activity
 
     # Relationships
     user = relationship("User", back_populates="threads")

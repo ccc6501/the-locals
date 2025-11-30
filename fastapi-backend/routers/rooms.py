@@ -27,6 +27,8 @@ class RoomOut(BaseModel):
     type: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    ai_enabled: Optional[bool] = True  # Phase 6
+    notifications_enabled: Optional[bool] = True  # Phase 6
 
     class Config:
         from_attributes = True
@@ -430,3 +432,87 @@ def add_room_member(room_id: int, payload: AddMemberRequest, db: Session = Depen
         "role": new_membership.role,
         "joined_at": new_membership.created_at,
     }
+
+
+# ========================================
+# Phase 6: Room Settings
+# ========================================
+
+class RoomSettingsUpdate(BaseModel):
+    ai_enabled: Optional[bool] = None
+    notifications_enabled: Optional[bool] = None
+
+
+@router.patch("/api/rooms/{room_id}/settings")
+def update_room_settings(
+    room_id: int,
+    settings: RoomSettingsUpdate,
+    db: Session = Depends(get_db)
+):
+    """
+    Update room settings (AI enabled, notifications).
+    Only room owner or admin can update settings.
+    """
+    current_user = get_current_user(db)
+    
+    # Get room
+    room = db.query(Thread).filter(Thread.id == room_id).first()
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+    
+    # Check if user is owner or admin of the room
+    membership = get_membership(db, current_user.id, room_id)
+    if not membership or membership.role not in ("owner", "admin"):
+        raise HTTPException(
+            status_code=403,
+            detail="Only room owners and admins can update settings"
+        )
+    
+    # Update settings
+    if settings.ai_enabled is not None:
+        room.ai_enabled = settings.ai_enabled
+    if settings.notifications_enabled is not None:
+        room.notifications_enabled = settings.notifications_enabled
+    
+    room.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(room)
+    
+    return {
+        "id": room.id,
+        "name": room.name,
+        "ai_enabled": room.ai_enabled,
+        "notifications_enabled": room.notifications_enabled,
+    }
+
+
+@router.delete("/api/rooms/{room_id}")
+def delete_room(
+    room_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Delete a room. Only the room owner can delete.
+    This will cascade delete all messages and memberships.
+    """
+    current_user = get_current_user(db)
+    
+    # Get room
+    room = db.query(Thread).filter(Thread.id == room_id).first()
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+    
+    # Check if user is the owner
+    membership = get_membership(db, current_user.id, room_id)
+    if not membership or membership.role != "owner":
+        raise HTTPException(
+            status_code=403,
+            detail="Only the room owner can delete the room"
+        )
+    
+    # Delete the room (cascades to messages and memberships)
+    db.delete(room)
+    db.commit()
+    
+    return {"message": f"Room '{room.name}' deleted successfully", "room_id": room_id}
+

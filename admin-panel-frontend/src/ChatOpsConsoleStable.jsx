@@ -14,6 +14,7 @@ import { DashboardPanel } from './components/DashboardPanel';
 import { SystemPanel } from './components/SystemPanel';
 import { CloudPanel } from './components/CloudPanel';
 import RoomMembersPanel from './components/RoomMembersPanel';
+import RoomSettingsPanel from './components/RoomSettingsPanel';
 import UsersView from './components/UsersView';
 import {
     Bot,
@@ -126,6 +127,7 @@ const ChatOpsConsoleStable = () => {
     const [activeView, setActiveView] = useState('chat');
     const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
     const [showMembersPanel, setShowMembersPanel] = useState(false);
+    const [showSettingsPanel, setShowSettingsPanel] = useState(false);
 
     // Provider / model
     const [provider, setProvider] = useState(() => localStorage.getItem('theLocal.provider') || 'openai');
@@ -314,6 +316,29 @@ const ChatOpsConsoleStable = () => {
             const data = await res.json();
             if (Array.isArray(data)) setLogs(data); else setLogs([]);
         } catch (e) { setLogs([]); }
+    };
+
+    // Phase 6: Room settings handlers
+    const handleRoomDeleted = (roomId) => {
+        // Remove room from list
+        const updatedRooms = rooms.filter(r => r.id !== roomId);
+
+        // If deleted room was active, switch to first available room
+        if (activeRoomId === roomId) {
+            const nextRoom = updatedRooms[0];
+            if (nextRoom) {
+                setActiveRoomId(nextRoom.id);
+            }
+        }
+
+        // Trigger rooms refresh
+        window.location.reload(); // Simple approach - could use context refresh instead
+    };
+
+    const handleSettingsUpdated = (updatedRoom) => {
+        // Room settings updated - could update local state here
+        // For now, just close the panel (already done in component)
+        console.log('Room settings updated:', updatedRoom);
     };
 
     const sendMessageToBackend = async (text) => {
@@ -610,17 +635,30 @@ const ChatOpsConsoleStable = () => {
                                         </span>
                                     )}
                                 </div>
-                                <button
-                                    onClick={() => setShowMembersPanel(!showMembersPanel)}
-                                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all ${showMembersPanel
-                                        ? 'bg-violet-500/20 text-violet-300 border border-violet-500/30'
-                                        : 'bg-slate-800/60 text-slate-400 border border-slate-700/60 hover:bg-slate-700/60 hover:text-slate-300'
-                                        }`}
-                                    aria-label="Room info"
-                                >
-                                    <Info className="w-3.5 h-3.5" />
-                                    <span className="hidden sm:inline">Info</span>
-                                </button>
+                                <div className="flex items-center gap-2">
+                                    {/* Settings button (owner/admin only) */}
+                                    {canManageMembers && (
+                                        <button
+                                            onClick={() => setShowSettingsPanel(true)}
+                                            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all bg-slate-800/60 text-slate-400 border border-slate-700/60 hover:bg-slate-700/60 hover:text-slate-300"
+                                            aria-label="Room settings"
+                                        >
+                                            <Settings className="w-3.5 h-3.5" />
+                                            <span className="hidden sm:inline">Settings</span>
+                                        </button>
+                                    )}
+                                    <button
+                                        onClick={() => setShowMembersPanel(!showMembersPanel)}
+                                        className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all ${showMembersPanel
+                                            ? 'bg-violet-500/20 text-violet-300 border border-violet-500/30'
+                                            : 'bg-slate-800/60 text-slate-400 border border-slate-700/60 hover:bg-slate-700/60 hover:text-slate-300'
+                                            }`}
+                                        aria-label="Room info"
+                                    >
+                                        <Info className="w-3.5 h-3.5" />
+                                        <span className="hidden sm:inline">Info</span>
+                                    </button>
+                                </div>
                             </div>
 
                             <div className="chat-scroll-area flex-1" ref={messagesContainerRef}>
@@ -676,6 +714,17 @@ const ChatOpsConsoleStable = () => {
                                     />
                                 </aside>
                             </>
+                        )}
+
+                        {/* Room Settings Panel - Modal */}
+                        {showSettingsPanel && (
+                            <RoomSettingsPanel
+                                room={rooms.find(r => r.id === activeRoomId)}
+                                onClose={() => setShowSettingsPanel(false)}
+                                onRoomDeleted={handleRoomDeleted}
+                                onSettingsUpdated={handleSettingsUpdated}
+                                canManageSettings={canManageMembers} // Owner/admin can manage settings
+                            />
                         )}
                     </div>
                 ) : (

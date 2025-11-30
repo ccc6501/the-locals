@@ -43,12 +43,24 @@ def get_user_by_tailscale_ip(db: Session, ip_address: str) -> Optional[User]:
     Get user by their Tailscale IP address
     Returns None if no matching device found
     """
-    # Check if this is localhost (admin access)
+    # Check if this is localhost (admin access from home-hub)
     if ip_address in ["127.0.0.1", "::1", "localhost"]:
-        # Return admin user for localhost
+        # Find the user linked to the home-hub device (100.88.23.90)
+        home_hub_device = db.query(Device).filter(
+            Device.tailscale_ip == "100.88.23.90",
+            Device.is_tailscale_device == True
+        ).first()
+        
+        if home_hub_device and home_hub_device.user_id:
+            user = db.query(User).filter(User.id == home_hub_device.user_id).first()
+            if user:
+                logger.info(f"Localhost access -> home-hub user: {user.handle}")
+                return user
+        
+        # Fallback: return first admin user
         admin_user = db.query(User).filter(User.role == "admin").first()
         if admin_user:
-            logger.info(f"Localhost access -> Admin user: {admin_user.handle}")
+            logger.info(f"Localhost access (fallback) -> Admin user: {admin_user.handle}")
             return admin_user
     
     # Look up device by Tailscale IP

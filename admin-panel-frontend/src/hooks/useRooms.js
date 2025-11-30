@@ -19,11 +19,28 @@ export function useRooms() {
                 return;
             }
             const data = await res.json();
-            setRooms(data || []);
+
+            // Fetch member counts for each room
+            const roomsWithMembers = await Promise.all(
+                (data || []).map(async (room) => {
+                    try {
+                        const membersRes = await fetch(`/api/rooms/${room.id}/members`);
+                        if (membersRes.ok) {
+                            const members = await membersRes.json();
+                            return { ...room, memberCount: members.length };
+                        }
+                    } catch (err) {
+                        console.error(`Failed to fetch members for room ${room.id}:`, err);
+                    }
+                    return { ...room, memberCount: 0 };
+                })
+            );
+
+            setRooms(roomsWithMembers);
 
             // Set default active room to first room if not already set
-            if (!activeRoomId && data && data.length > 0) {
-                setActiveRoomId(data[0].id);
+            if (!activeRoomId && roomsWithMembers && roomsWithMembers.length > 0) {
+                setActiveRoomId(roomsWithMembers[0].id);
             }
         } catch (err) {
             console.error('Failed to load rooms:', err);
@@ -52,17 +69,29 @@ export function useRooms() {
 
             const room = await res.json();
 
+            // Fetch member count for the new room
+            let roomWithMembers = { ...room, memberCount: 1 }; // Default to 1 (the creator)
+            try {
+                const membersRes = await fetch(`/api/rooms/${room.id}/members`);
+                if (membersRes.ok) {
+                    const members = await membersRes.json();
+                    roomWithMembers.memberCount = members.length;
+                }
+            } catch (err) {
+                console.error('Failed to fetch members for new room:', err);
+            }
+
             // Add to rooms list if not already present
             setRooms((prev) => {
-                const existing = prev.find((r) => r.id === room.id);
+                const existing = prev.find((r) => r.id === roomWithMembers.id);
                 if (existing) return prev;
-                return [room, ...prev]; // Add new room at top
+                return [roomWithMembers, ...prev]; // Add new room at top
             });
 
             // Switch to the new room
-            setActiveRoomId(room.id);
+            setActiveRoomId(roomWithMembers.id);
 
-            return room;
+            return roomWithMembers;
         } catch (err) {
             console.error('Failed to create room:', err);
             throw err;

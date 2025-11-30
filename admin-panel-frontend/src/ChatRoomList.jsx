@@ -1,6 +1,6 @@
 // admin-panel-frontend/src/ChatRoomList.jsx
 import React from "react";
-import { MessageSquare, Plus, Loader2 } from "lucide-react";
+import { MessageSquare, Plus, Loader2, Users } from "lucide-react";
 
 /**
  * ChatRoomList - Display list of chat rooms (now prop-based, no internal fetch)
@@ -91,8 +91,16 @@ const ChatRoomList = ({ rooms = [], activeRoomId, onSelectRoom, onCreateRoom, lo
                                 </span>
                                 <span className="truncate">{room.name}</span>
                             </span>
-                            <span className="text-[10px] text-slate-500 uppercase">
-                                {room.id}
+                            <span className="flex items-center gap-1.5">
+                                {room.memberCount !== undefined && (
+                                    <span className="flex items-center gap-1 text-[10px] text-slate-500">
+                                        <Users className="w-3 h-3" />
+                                        {room.memberCount}
+                                    </span>
+                                )}
+                                <span className="text-[10px] text-slate-500 uppercase">
+                                    #{room.id}
+                                </span>
                             </span>
                         </button>
                     );

@@ -29,6 +29,7 @@ class User(Base):
     threads = relationship("Thread", back_populates="user", cascade="all, delete-orphan")
     messages = relationship("Message", back_populates="user", cascade="all, delete-orphan")
     user_devices = relationship("Device", back_populates="user", cascade="all, delete-orphan")
+    memberships = relationship("RoomMember", back_populates="user", cascade="all, delete-orphan")
 
 
 class Device(Base):
@@ -77,6 +78,7 @@ class Thread(Base):
     # Relationships
     user = relationship("User", back_populates="threads")
     messages = relationship("Message", back_populates="thread", cascade="all, delete-orphan")
+    members = relationship("RoomMember", back_populates="thread", cascade="all, delete-orphan")
 
 
 class Message(Base):
@@ -93,6 +95,21 @@ class Message(Base):
     # Relationships
     thread = relationship("Thread", back_populates="messages")
     user = relationship("User", back_populates="messages")
+
+
+class RoomMember(Base):
+    """Room membership model - links users to threads/rooms"""
+    __tablename__ = "room_members"
+
+    id = Column(Integer, primary_key=True, index=True)
+    thread_id = Column(Integer, ForeignKey("threads.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    role = Column(String(20), default="member")  # owner, admin, member
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    thread = relationship("Thread", back_populates="members")
+    user = relationship("User", back_populates="memberships")
 
 
 class Connection(Base):

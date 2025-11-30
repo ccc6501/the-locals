@@ -4,6 +4,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useChatPersistence } from './hooks/useChatPersistence';
 import { useProviderStatus } from './hooks/useProviderStatus';
+import { useCurrentUser } from './hooks/useCurrentUser';
+import { useRoomMembers } from './hooks/useRoomMembers';
 import { useRoomsContext } from './context/RoomsContext';
 import ChatRoomList from './ChatRoomList';
 import { ErrorToasts } from './components/ErrorToasts';
@@ -11,6 +13,7 @@ import { ConnectionsPanel } from './components/ConnectionsPanel';
 import { DashboardPanel } from './components/DashboardPanel';
 import { SystemPanel } from './components/SystemPanel';
 import { CloudPanel } from './components/CloudPanel';
+import RoomMembersPanel from './components/RoomMembersPanel';
 import {
     Bot,
     Menu,
@@ -27,7 +30,8 @@ import {
     Key,
     Cpu,
     X,
-    Plus
+    Plus,
+    Info
 } from 'lucide-react';
 
 // Helpers
@@ -103,12 +107,19 @@ const ChatOpsConsoleStable = () => {
     const messagesContainerRef = useRef(null);
     const inputRef = useRef(null);
 
+    // Current user
+    const { currentUser, loading: userLoading } = useCurrentUser();
+
     // Rooms (persistent from /api/rooms) - now from context
     const { rooms, activeRoomId, setActiveRoomId, createRoom, loading: roomsLoading } = useRoomsContext();
+
+    // Room members for active room
+    const { members, loading: membersLoading, error: membersError } = useRoomMembers(activeRoomId);
 
     // Views
     const [activeView, setActiveView] = useState('chat');
     const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+    const [showMembersPanel, setShowMembersPanel] = useState(false);
 
     // Provider / model
     const [provider, setProvider] = useState(() => localStorage.getItem('theLocal.provider') || 'openai');
@@ -425,6 +436,13 @@ const ChatOpsConsoleStable = () => {
                         <span className="hidden sm:inline">Tailnet</span>
                         <span className="uppercase tracking-wide text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-slate-900/50">{tailnetStatus === 'online' ? 'OK' : tailnetStatus === 'offline' ? 'DOWN' : 'WAIT'}</span>
                     </div>
+                    {currentUser && (
+                        <div className="hidden lg:flex items-center gap-1.5 px-3 py-2 rounded-lg border bg-slate-800/70 border-slate-700 text-slate-300 text-[11px] font-medium">
+                            <UserCircle className="w-3.5 h-3.5" />
+                            <span className="font-semibold">{currentUser.name}</span>
+                            <span className="text-slate-400">{currentUser.handle}</span>
+                        </div>
+                    )}
                     <button onClick={() => setMobileMenuOpen(true)} className="h-10 w-10 rounded-xl bg-slate-900/80 border border-slate-700 flex items-center justify-center" aria-label="Open drawer">
                         <Menu className="w-4 h-4 text-slate-100" />
                     </button>
@@ -443,6 +461,16 @@ const ChatOpsConsoleStable = () => {
                             <button onClick={() => setMobileMenuOpen(false)} className="p-1 rounded-lg hover:bg-slate-800/60"><X className="w-5 h-5 text-slate-400" /></button>
                         </div>
                         <div className="px-4 pb-3 space-y-2 text-[11px] text-slate-400 flex-1 overflow-y-auto">
+                            {currentUser && (
+                                <div className="rounded-lg border border-slate-800/70 bg-slate-950/40 px-3 py-2 backdrop-blur-sm mb-3">
+                                    <div className="flex items-center gap-2">
+                                        <UserCircle className="w-4 h-4 text-violet-400" />
+                                        <span className="text-slate-300 font-semibold">{currentUser.name}</span>
+                                        <span className="text-slate-500">{currentUser.handle}</span>
+                                    </div>
+                                    <div className="text-[10px] text-slate-500 mt-1">Role: <span className="text-slate-400 uppercase">{currentUser.role}</span></div>
+                                </div>
+                            )}
                             <div className="rounded-lg border border-slate-800/70 bg-slate-950/40 px-3 py-2 backdrop-blur-sm">
                                 <div className="flex items-center gap-2">
                                     <Wifi className="w-3.5 h-3.5 text-slate-500" />
@@ -560,6 +588,32 @@ const ChatOpsConsoleStable = () => {
 
                         {/* Chat Main Pane */}
                         <div className="flex-1 flex flex-col overflow-hidden">
+                            {/* Chat Header with Room Info */}
+                            <div className="flex items-center justify-between px-4 py-2 border-b border-slate-800/60 bg-slate-900/40">
+                                <div className="flex items-center gap-2">
+                                    <MessageSquare className="w-4 h-4 text-slate-500" />
+                                    <span className="text-sm font-medium text-slate-300">
+                                        {rooms.find(r => r.id === activeRoomId)?.name || 'Chat'}
+                                    </span>
+                                    {rooms.find(r => r.id === activeRoomId)?.memberCount !== undefined && (
+                                        <span className="text-xs text-slate-500">
+                                            ({rooms.find(r => r.id === activeRoomId)?.memberCount} members)
+                                        </span>
+                                    )}
+                                </div>
+                                <button
+                                    onClick={() => setShowMembersPanel(!showMembersPanel)}
+                                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all ${showMembersPanel
+                                            ? 'bg-violet-500/20 text-violet-300 border border-violet-500/30'
+                                            : 'bg-slate-800/60 text-slate-400 border border-slate-700/60 hover:bg-slate-700/60 hover:text-slate-300'
+                                        }`}
+                                    aria-label="Room info"
+                                >
+                                    <Info className="w-3.5 h-3.5" />
+                                    <span className="hidden sm:inline">Info</span>
+                                </button>
+                            </div>
+
                             <div className="chat-scroll-area flex-1" ref={messagesContainerRef}>
                                 {renderMessages()}
                             </div>
@@ -584,6 +638,32 @@ const ChatOpsConsoleStable = () => {
                                 </div>
                             </div>
                         </div>
+
+                        {/* Room Members Panel - Desktop & Mobile */}
+                        {showMembersPanel && (
+                            <>
+                                {/* Mobile: Full screen overlay */}
+                                <div className="lg:hidden fixed inset-0 bg-black/55 backdrop-blur-md z-40" onClick={() => setShowMembersPanel(false)} />
+                                <div className="lg:hidden fixed inset-y-0 right-0 w-80 max-w-[90vw] bg-slate-900/95 backdrop-blur-xl border-l border-slate-800/70 shadow-2xl z-50">
+                                    <RoomMembersPanel
+                                        members={members}
+                                        loading={membersLoading}
+                                        error={membersError}
+                                        onClose={() => setShowMembersPanel(false)}
+                                    />
+                                </div>
+
+                                {/* Desktop: Side panel */}
+                                <aside className="hidden lg:block lg:w-80 border-l border-slate-800/60 bg-slate-900/40">
+                                    <RoomMembersPanel
+                                        members={members}
+                                        loading={membersLoading}
+                                        error={membersError}
+                                        onClose={() => setShowMembersPanel(false)}
+                                    />
+                                </aside>
+                            </>
+                        )}
                     </div>
                 ) : (
                     <div className="chat-scroll-area" ref={messagesContainerRef}>

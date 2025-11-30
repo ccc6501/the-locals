@@ -11,8 +11,19 @@ from database import get_db
 from models import User, Device, Notification
 from schemas import UserResponse, UserCreate, UserUpdate
 from auth_utils import get_current_active_user, require_admin, require_moderator, get_password_hash
+from auth.current_user import get_current_user
 
 router = APIRouter()
+
+
+@router.get("/me", response_model=UserResponse)
+async def get_me(db: Session = Depends(get_db)):
+    """
+    Get current user information.
+    For Phase 4A, always returns Chance (no auth yet).
+    """
+    current_user = get_current_user(db)
+    return current_user
 
 
 @router.get("/admin/summary")

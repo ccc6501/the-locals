@@ -8,7 +8,8 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import Thread, Message, User
+from models import Thread, Message, User, RoomMember
+from auth.current_user import get_current_user
 
 router = APIRouter()
 
@@ -45,6 +46,22 @@ class RoomCreateRequest(BaseModel):
 
 class MessageCreateRequest(BaseModel):
     text: str
+
+
+class RoomMemberOut(BaseModel):
+    """Room member with user information"""
+    user_id: int
+    name: str
+    handle: str
+    role: str
+    joined_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class AddMemberRequest(BaseModel):
+    user_id: int
 
 
 # ---------- Helpers ----------
@@ -115,6 +132,7 @@ def list_rooms(db: Session = Depends(get_db)):
 def create_room(payload: RoomCreateRequest, db: Session = Depends(get_db)):
     """
     Create a new room (Thread) with the given name and optional type.
+    Automatically adds the current user as owner.
     """
     name = (payload.name or "").strip()
     room_type = (payload.type or "room").strip()
@@ -141,6 +159,18 @@ def create_room(payload: RoomCreateRequest, db: Session = Depends(get_db)):
     db.add(room)
     db.commit()
     db.refresh(room)
+    
+    # Auto-create membership for the current user as owner
+    current_user = get_current_user(db)
+    membership = RoomMember(
+        thread_id=room.id,
+        user_id=current_user.id,
+        role="owner",
+        created_at=now,
+    )
+    db.add(membership)
+    db.commit()
+    
     return room
 
 
@@ -207,3 +237,90 @@ def create_room_message(
     db.commit()
     db.refresh(message)
     return message
+
+
+@router.get("/api/rooms/{room_id}/members", response_model=List[RoomMemberOut])
+def get_room_members(room_id: int, db: Session = Depends(get_db)):
+    """
+    Get all members of a room with their user information.
+    """
+    # Verify room exists
+    room = db.query(Thread).filter(Thread.id == room_id).first()
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+    
+    # Get all memberships for this room
+    memberships = (
+        db.query(RoomMember)
+        .filter(RoomMember.thread_id == room_id)
+        .all()
+    )
+    
+    # Build response with user info
+    result = []
+    for membership in memberships:
+        user = db.query(User).filter(User.id == membership.user_id).first()
+        if user:
+            result.append({
+                "user_id": user.id,
+                "name": user.name,
+                "handle": user.handle,
+                "role": membership.role,
+                "joined_at": membership.created_at,
+            })
+    
+    return result
+
+
+@router.post("/api/rooms/{room_id}/members", response_model=RoomMemberOut)
+def add_room_member(room_id: int, payload: AddMemberRequest, db: Session = Depends(get_db)):
+    """
+    Add a user to a room as a member.
+    """
+    user_id = payload.user_id
+    
+    # Verify room exists
+    room = db.query(Thread).filter(Thread.id == room_id).first()
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+    
+    # Verify user exists
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Check if already a member
+    existing = (
+        db.query(RoomMember)
+        .filter(RoomMember.thread_id == room_id, RoomMember.user_id == user_id)
+        .first()
+    )
+    if existing:
+        # Return existing membership info
+        return {
+            "user_id": user.id,
+            "name": user.name,
+            "handle": user.handle,
+            "role": existing.role,
+            "joined_at": existing.created_at,
+        }
+    
+    # Create new membership
+    now = datetime.utcnow()
+    membership = RoomMember(
+        thread_id=room_id,
+        user_id=user_id,
+        role="member",
+        created_at=now,
+    )
+    db.add(membership)
+    db.commit()
+    db.refresh(membership)
+    
+    return {
+        "user_id": user.id,
+        "name": user.name,
+        "handle": user.handle,
+        "role": membership.role,
+        "joined_at": membership.created_at,
+    }

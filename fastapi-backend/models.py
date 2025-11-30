@@ -46,6 +46,11 @@ class Device(Base):
     first_seen = Column(DateTime, default=datetime.utcnow)
     is_active = Column(Boolean, default=True)
     
+    # Tailscale integration
+    tailscale_ip = Column(String(50), unique=True, nullable=True, index=True)  # Tailnet IP address
+    tailscale_hostname = Column(String(100), nullable=True)  # Tailscale device name
+    is_tailscale_device = Column(Boolean, default=False)  # Flag for Tailnet devices
+    
     # Relationships
     user = relationship("User", back_populates="user_devices")
 

@@ -94,6 +94,65 @@ async def get_public_user_count(db: Session = Depends(get_db)):
     return {"total": total}
 
 
+@router.get("/active/tailscale")
+async def get_active_tailscale_users(db: Session = Depends(get_db)):
+    """
+    Get all active Tailscale users with their device info
+    Shows online status, role, and Tailscale IP for multi-user testing
+    """
+    from datetime import datetime, timedelta
+    
+    # Get all Tailscale devices
+    tailscale_devices = db.query(Device).filter(
+        Device.is_tailscale_device == True
+    ).order_by(Device.last_active.desc()).all()
+    
+    active_users = []
+    for device in tailscale_devices:
+        user = db.query(User).filter(User.id == device.user_id).first()
+        if not user:
+            continue
+        
+        # Determine online status (active within last 5 minutes)
+        is_online = False
+        last_seen = "Never"
+        if device.last_active:
+            time_diff = datetime.utcnow() - device.last_active
+            is_online = time_diff < timedelta(minutes=5)
+            
+            if time_diff < timedelta(minutes=1):
+                last_seen = "Just now"
+            elif time_diff < timedelta(minutes=60):
+                mins = int(time_diff.total_seconds() / 60)
+                last_seen = f"{mins}m ago"
+            elif time_diff < timedelta(hours=24):
+                hours = int(time_diff.total_seconds() / 3600)
+                last_seen = f"{hours}h ago"
+            else:
+                days = int(time_diff.total_seconds() / 86400)
+                last_seen = f"{days}d ago"
+        
+        active_users.append({
+            "id": user.id,
+            "handle": user.handle,
+            "name": user.name,
+            "email": user.email,
+            "role": user.role,
+            "isOnline": is_online,
+            "lastSeen": last_seen,
+            "deviceName": device.tailscale_hostname or device.device_name,
+            "deviceType": device.device_type,
+            "tailscaleIp": device.tailscale_ip,
+            "lastActive": device.last_active.isoformat() if device.last_active else None
+        })
+    
+    return {
+        "users": active_users,
+        "total": len(active_users),
+        "online": sum(1 for u in active_users if u["isOnline"])
+    }
+
+
 @router.get("", response_model=List[UserResponse], response_model_by_alias=True)
 async def get_users(
     db: Session = Depends(get_db)

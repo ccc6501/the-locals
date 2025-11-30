@@ -15,7 +15,7 @@ import { SystemPanel } from './components/SystemPanel';
 import { CloudPanel } from './components/CloudPanel';
 import RoomMembersPanel from './components/RoomMembersPanel';
 import RoomSettingsPanel from './components/RoomSettingsPanel';
-import UsersView from './components/UsersView';
+import ActiveUsers from './components/ActiveUsers';
 import {
     Bot,
     Menu,
@@ -803,7 +803,7 @@ const ChatOpsConsoleStable = () => {
                         )}
                         {activeView === 'system' && <SystemPanel tailnetStats={tailnetStats} refreshTailnetStats={refreshTailnetStats} exitNodeChanging={tailnetLoading} setExitNodeChanging={setTailnetLoading} currentUser={currentUser} />}
                         {activeView === 'cloud' && <CloudPanel apiBase={API_BASE} />}
-                        {activeView === 'users' && <UsersView />}
+                        {activeView === 'users' && <ActiveUsers />}
                         {activeView !== 'chat' && activeView !== 'connections' && activeView !== 'dashboard' && activeView !== 'system' && activeView !== 'cloud' && activeView !== 'users' && <ViewPlaceholder view={activeView} />}
                     </div>
                 )}

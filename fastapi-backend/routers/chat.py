@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from pydantic import BaseModel
 
 from database import get_db
-from models import User, Thread, Message, Connection, Room, RoomMember, UserPermission
+from models import User, Thread, Message, Connection
 from schemas import ThreadCreate, ThreadResponse, MessageCreate, MessageResponse
 from auth_utils import get_current_active_user
 
@@ -73,8 +73,7 @@ class SimpleChatRequest(BaseModel):
     provider: str = "openai"
     temperature: float = 0.7
     config: Optional[ChatConfig] = None
-    room_id: Optional[int] = None  # Optional room context
-    user_id: Optional[int] = None  # User making the request (for permission checks)
+    thread_id: Optional[int] = None  # Optional thread/room ID for message persistence
 
 
 class SimpleChatResponse(BaseModel):
@@ -141,146 +140,36 @@ async def _build_ai_context() -> str:
         return f"CONTEXT ERROR: {str(e)}"
 
 
-async def _get_room_ai_config(room_id: int, db: Session) -> dict:
-    """Get AI configuration for a room"""
-    import json
-    
-    room = db.query(Room).filter(Room.id == room_id).first()
-    if not room:
-        return {}
-    
-    # Parse ai_config JSON
-    try:
-        ai_config_str = getattr(room, 'ai_config', None)
-        if ai_config_str:
-            return json.loads(ai_config_str)
-        return {}
-    except Exception:
-        return {}
-
-
-async def _check_user_permission(user_id: int, permission: str, db: Session) -> bool:
-    """Check if user has a specific permission"""
-    
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        return False
-    
-    # Owner has all permissions
-    if user.role == "owner":
-        return True
-    
-    # Check explicit permission
-    has_permission = db.query(UserPermission).filter(
-        UserPermission.user_id == user_id,
-        UserPermission.permission == permission
-    ).first()
-    
-    return has_permission is not None
-
-
-async def _get_room_message_history(room_id: int, limit: int, db: Session) -> list:
-    """Get recent message history for a room"""
-    
-    messages = db.query(Message).filter(
-        Message.room_id == room_id
-    ).order_by(Message.created_at.desc()).limit(limit).all()
-    
-    # Reverse to show oldest first
-    messages.reverse()
-    
-    return [
-        {
-            "role": msg.role or "user",
-            "content": msg.content
-        }
-        for msg in messages
-    ]
-
-
-async def _save_room_messages(room_id: int, user_id: int, user_message: str, ai_response: str, db: Session):
-    """Save user message and AI response to room"""
-    import json
-    
-    # Save user message
-    user_msg = Message(
-        room_id=room_id,
-        user_id=user_id,
-        role="user",
-        content=user_message,
-        metadata=json.dumps({"from_chat_endpoint": True})
-    )
-    db.add(user_msg)
-    
-    # Save AI response
-    ai_msg = Message(
-        room_id=room_id,
-        user_id=user_id,  # Associate with user who triggered it
-        role="assistant",
-        content=ai_response,
-        metadata=json.dumps({"from_chat_endpoint": True})
-    )
-    db.add(ai_msg)
-    
-    db.commit()
-
-
 @router.post("/chat", response_model=SimpleChatResponse)
 async def simple_chat(request: SimpleChatRequest, db: Session = Depends(get_db)):
     """
-    Simple chat endpoint for ChatOps console with room context support.
-    No authentication required (for backwards compatibility), but room context requires user_id.
-    Supports OpenAI and Ollama with automatic fallback.
+    Simple chat endpoint for ChatOps console.
+    No authentication required, supports OpenAI and Ollama with automatic fallback.
     Returns exactly one assistant response per request.
     """
     
-    # If room_id is provided, load room AI config and check permissions
-    room_config = {}
-    room_name = None
-    if request.room_id:
-        room_config = await _get_room_ai_config(request.room_id, db)
-        room = db.query(Room).filter(Room.id == request.room_id).first()
-        room_name = str(room.name) if room and room.name else None
-        
-        # Check if user is a member of this room (if user_id provided)
-        if request.user_id:
-            membership = db.query(RoomMember).filter(
-                RoomMember.room_id == request.room_id,
-                RoomMember.user_id == request.user_id
-            ).first()
-            
-            if not membership:
-                # Check if user is owner/admin (bypass membership check)
-                user = db.query(User).filter(User.id == request.user_id).first()
-                if not user or user.role not in ["owner", "admin"]:
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail="Not authorized to access this room"
-                    )
-    
-    # Override provider/model/temperature from room config if available
-    provider = room_config.get("provider", request.provider)
-    model = room_config.get("model", request.config.model if request.config else None)
-    temperature = room_config.get("temperature", request.temperature)
-    
-    # Create config with room overrides
-    if not request.config:
-        request.config = ChatConfig()
-    
-    if model and not request.config.model:
-        request.config.model = model
-    
-    # Update request with room settings
-    request.provider = provider
-    request.temperature = temperature
+    # Phase 6: Check if AI is enabled for this room
+    if request.thread_id:
+        thread = db.query(Thread).filter(Thread.id == request.thread_id).first()
+        if thread and not thread.ai_enabled:
+            # Return a polite message instead of an AI response
+            return SimpleChatResponse(
+                role="assistant",
+                text="AI responses are disabled for this room. Enable them in room settings to chat with The Local.",
+                provider="disabled",
+                model="none",
+                temperature=request.temperature,
+                authorTag="TL",
+                createdAt=datetime.utcnow().isoformat()
+            )
     
     # Single-provider routing - exactly one provider per request
     if request.provider == "openai":
-        return await _chat_openai_simple(request, room_config, room_name, db)
+        return await _chat_openai_simple(request, db)
     elif request.provider == "ollama":
         # Try Ollama first, fallback to OpenAI if it fails
         try:
-            return await _chat_ollama_simple(request, room_config, room_name, db)
+            return await _chat_ollama_simple(request, db)
         except HTTPException as e:
             # If Ollama is unavailable (503) or model missing, fallback to OpenAI
             if e.status_code in [503, 404]:
@@ -290,11 +179,9 @@ async def simple_chat(request: SimpleChatRequest, db: Session = Depends(get_db))
                     message=request.message,
                     provider="openai",
                     temperature=request.temperature,
-                    config=request.config,
-                    room_id=request.room_id,
-                    user_id=request.user_id
+                    config=request.config
                 )
-                response = await _chat_openai_simple(openai_request, room_config, room_name, db)
+                response = await _chat_openai_simple(openai_request, db)
                 # Add fallback metadata
                 response.provider = "openai"
                 response.model = f"{response.model} (fallback)"
@@ -306,22 +193,33 @@ async def simple_chat(request: SimpleChatRequest, db: Session = Depends(get_db))
         raise HTTPException(status_code=400, detail=f"Unknown provider: {request.provider}")
 
 
-async def _chat_openai_simple(request: SimpleChatRequest, room_config: dict = {}, room_name: Optional[str] = None, db: Optional[Session] = None) -> SimpleChatResponse:
-    """Call OpenAI API for simple chat with graceful fallbacks and room context support.
+async def _chat_openai_simple(request: SimpleChatRequest, db: Session) -> SimpleChatResponse:
+    """Call OpenAI API for simple chat with graceful fallbacks.
     Fallback order for models: user-specified -> gpt-4o -> gpt-4o-mini -> gpt-3.5-turbo
     Provides clearer error messages for common failure modes (auth, quota, model not found).
     """
 
-    # Get API key from request or environment
-    api_key = (request.config.api_key if request.config and request.config.api_key else os.getenv("OPENAI_API_KEY"))
+    # Get API key from database first (priority), then environment variable
+    # DB key takes priority over env var
+    db_key = None
+    try:
+        openai_conn = db.query(Connection).filter(Connection.service == "openai").first()
+        if openai_conn and getattr(openai_conn, 'config', None):
+            import json
+            config_data = json.loads(openai_conn.config)
+            db_key = config_data.get("apiKey")
+    except Exception as e:
+        print(f"Warning: Could not retrieve OpenAI key from database: {e}")
+    
+    api_key = db_key or os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise HTTPException(
             status_code=400,
-            detail="OpenAI API key required. Provide in config.api_key or set OPENAI_API_KEY environment variable."
+            detail="OpenAI API key required. Set it in Connections > OpenAI or set OPENAI_API_KEY environment variable."
         )
 
     # Updated priority list; allow env override OPENAI_MODEL_PRIORITY (comma-separated)
-    requested_model = (request.config.model if request.config else None) or room_config.get("model") or os.getenv("OPENAI_DEFAULT_MODEL", "gpt-4o-mini")
+    requested_model = (request.config.model if request.config else None) or os.getenv("OPENAI_DEFAULT_MODEL", "gpt-4o-mini")
     env_priority = os.getenv("OPENAI_MODEL_PRIORITY", "gpt-4o-mini,gpt-4o,gpt-4.1-mini,gpt-4.1,gpt-3.5-turbo")
     priority_list = [m.strip() for m in env_priority.split(',') if m.strip()]
     fallback_models = [requested_model] + priority_list
@@ -336,32 +234,6 @@ async def _chat_openai_simple(request: SimpleChatRequest, room_config: dict = {}
 
     # Build real-time context for AI
     context = await _build_ai_context()
-    
-    # Build system prompt with room context
-    assistant_name = room_config.get("assistant_name", "The Local")
-    assistant_persona = room_config.get("assistant_persona", "a helpful AI assistant for a Tailscale-powered home hub")
-    
-    system_prompt = f"""You are {assistant_name}, {assistant_persona}. Be friendly, concise, and helpful. You can answer questions about the system, help manage the network, or just chat.
-
-Current system context (use this for accurate answers):
-{context}
-
-When asked about the network, always use the real device data above. Never make up device counts or names."""
-
-    # Add room-specific context
-    if room_name:
-        system_prompt += f"\n\nYou are currently in the '{room_name}' room."
-    
-    # Get message history if in a room
-    messages = [{"role": "system", "content": system_prompt}]
-    
-    if request.room_id and db:
-        # Include recent message history for context
-        history = await _get_room_message_history(request.room_id, 10, db)
-        messages.extend(history)
-    
-    # Add current user message
-    messages.append({"role": "user", "content": request.message})
 
     last_error = None
     client = OpenAI(api_key=api_key)
@@ -381,7 +253,18 @@ When asked about the network, always use the real device data above. Never make 
                 raise Exception(f"Model '{model}' not in account model list")
             response = client.chat.completions.create(
                 model=model,
-                messages=messages,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": f"""You are The Local, a helpful AI assistant for a Tailscale-powered home hub. Be friendly, concise, and helpful. You can answer questions about the system, help manage the network, or just chat.
+
+Current system context (use this for accurate answers):
+{context}
+
+When asked about the network, always use the real device data above. Never make up device counts or names."""
+                    },
+                    {"role": "user", "content": request.message}
+                ],
                 temperature=request.temperature,
                 max_tokens=1000
             )
@@ -389,9 +272,14 @@ When asked about the network, always use the real device data above. Never make 
 
             update_ai_status("openai", "online")
             
-            # Save message to room if room_id provided
-            if request.room_id and request.user_id and db:
-                await _save_room_messages(request.room_id, request.user_id, request.message, reply_text, db)
+            # Persist assistant response if thread_id provided (Phase 1)
+            if request.thread_id:
+                persist_assistant_message(
+                    thread_id=request.thread_id,
+                    text=reply_text,
+                    db=db,
+                    sender="TL"
+                )
             
             return SimpleChatResponse(
                 role="assistant",
@@ -399,7 +287,7 @@ When asked about the network, always use the real device data above. Never make 
                 provider="openai",
                 model=model if model == requested_model else f"{model} (fallback)",
                 temperature=request.temperature,
-                authorTag=room_config.get("assistant_initials", "TL"),
+                authorTag="TL",
                 createdAt=datetime.utcnow().isoformat()
             )
         except Exception as e:
@@ -420,45 +308,19 @@ When asked about the network, always use the real device data above. Never make 
     raise HTTPException(status_code=500, detail=f"OpenAI API error (all fallbacks failed): {repr(last_error)}")
 
 
-async def _chat_ollama_simple(request: SimpleChatRequest, room_config: dict = {}, room_name: Optional[str] = None, db: Optional[Session] = None) -> SimpleChatResponse:
-    """Call Ollama API for simple chat with model selection and room context support"""
+async def _chat_ollama_simple(request: SimpleChatRequest, db: Session) -> SimpleChatResponse:
+    """Call Ollama API for simple chat with model selection"""
     
     base_url = (request.config.base_url if request.config else None) or "http://localhost:11434"
     
-    # Use ollama_model if provided, otherwise fallback to model, then room config, then default
+    # Use ollama_model if provided, otherwise fallback to model, then default
     model = None
     if request.config:
         model = request.config.ollama_model or request.config.model
-    model = model or room_config.get("model") or "llama3"
+    model = model or "llama3"
     
     # Build real-time context for AI
     context = await _build_ai_context()
-    
-    # Build system prompt with room context
-    assistant_name = room_config.get("assistant_name", "The Local")
-    assistant_persona = room_config.get("assistant_persona", "a helpful AI assistant for a Tailscale-powered home hub")
-    
-    system_prompt = f"""You are {assistant_name}, {assistant_persona}. Be friendly, concise, and helpful. You can answer questions about the system, help manage the network, or just chat.
-
-Current system context (use this for accurate answers):
-{context}
-
-When asked about the network, always use the real device data above. Never make up device counts or names."""
-
-    # Add room-specific context
-    if room_name:
-        system_prompt += f"\n\nYou are currently in the '{room_name}' room."
-    
-    # Get message history if in a room
-    messages = [{"role": "system", "content": system_prompt}]
-    
-    if request.room_id and db:
-        # Include recent message history for context
-        history = await _get_room_message_history(request.room_id, 10, db)
-        messages.extend(history)
-    
-    # Add current user message
-    messages.append({"role": "user", "content": request.message})
     
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
@@ -466,7 +328,21 @@ When asked about the network, always use the real device data above. Never make 
                 f"{base_url}/api/chat",
                 json={
                     "model": model,
-                    "messages": messages,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": f"""You are The Local, a helpful AI assistant for a Tailscale-powered home hub. Be friendly, concise, and helpful. You can answer questions about the system, help manage the network, or just chat.
+
+Current system context (use this for accurate answers):
+{context}
+
+When asked about the network, always use the real device data above. Never make up device counts or names."""
+                        },
+                        {
+                            "role": "user",
+                            "content": request.message
+                        }
+                    ],
                     "stream": False,
                     "options": {
                         "temperature": request.temperature,
@@ -481,9 +357,14 @@ When asked about the network, always use the real device data above. Never make 
             # Update AI status cache
             update_ai_status("ollama", "online")
             
-            # Save message to room if room_id provided
-            if request.room_id and request.user_id and db:
-                await _save_room_messages(request.room_id, request.user_id, request.message, reply_text, db)
+            # Persist assistant response if thread_id provided (Phase 1)
+            if request.thread_id:
+                persist_assistant_message(
+                    thread_id=request.thread_id,
+                    text=reply_text,
+                    db=db,
+                    sender="TL"
+                )
             
             # Return with metadata - NO provider/model suffix in text
             return SimpleChatResponse(
@@ -492,7 +373,7 @@ When asked about the network, always use the real device data above. Never make 
                 provider="ollama",
                 model=model,
                 temperature=request.temperature,
-                authorTag=room_config.get("assistant_initials", "TL"),
+                authorTag="TL",
                 createdAt=datetime.utcnow().isoformat()
             )
     
@@ -800,20 +681,82 @@ def update_ai_status(provider: str, status: str):
     _last_ai_status = {"provider": provider, "status": status}
 
 
+def persist_assistant_message(
+    thread_id: int,
+    text: str,
+    db: Session,
+    sender: str = "TL"
+) -> Optional[Message]:
+    """
+    Persist an assistant's reply to the database.
+    
+    Args:
+        thread_id: The thread/room ID to save the message to
+        text: The assistant's response text
+        db: Database session
+        sender: Sender name/tag (default: "TL" for The Local)
+    
+    Returns:
+        The created Message object, or None if thread doesn't exist
+    """
+    try:
+        # Verify thread exists
+        thread = db.query(Thread).filter(Thread.id == thread_id).first()
+        if not thread:
+            print(f"[persist_message] Thread {thread_id} not found, skipping persistence")
+            return None
+        
+        # Create message with user_id=None for assistant messages
+        message = Message(
+            thread_id=thread_id,
+            user_id=None,  # Assistant messages have no user_id
+            sender=sender,
+            text=text.strip(),
+            timestamp=datetime.utcnow()
+        )
+        
+        db.add(message)
+        db.commit()
+        db.refresh(message)
+        
+        # Update thread's updated_at timestamp
+        thread.updated_at = datetime.utcnow()
+        db.commit()
+        
+        print(f"[persist_message] Saved assistant message {message.id} to thread {thread_id}")
+        return message
+    
+    except Exception as e:
+        print(f"[persist_message] Error saving message: {e}")
+        db.rollback()
+        return None
+
+
 # --- ChatOps health endpoint ---
 class ProviderHealthResponse(BaseModel):
     providerStatuses: dict
 
 
 @router.get("/health")
-async def chat_health(ollama_url: str = "http://localhost:11434"):
+async def chat_health(ollama_url: str = "http://localhost:11434", db: Session = Depends(get_db)):
     """Lightweight health endpoint for ChatOps console.
     Returns provider status codes without performing full chat calls.
     openai: 'key-missing' | 'ok'
     ollama: 'ok' | 'offline' | 'error'
     """
-    # OpenAI status: just check key presence (avoid token billing on health)
-    openai_key = os.getenv("OPENAI_API_KEY")
+    # OpenAI status: check database key first (priority), then env var
+    # DB key takes priority over env var
+    import json
+    db_key = None
+    try:
+        openai_conn = db.query(Connection).filter(Connection.service == "openai").first()
+        if openai_conn and getattr(openai_conn, 'config', None):
+            config_data = json.loads(openai_conn.config)
+            db_key = config_data.get("apiKey")
+    except Exception:
+        pass
+    
+    openai_key = db_key or os.getenv("OPENAI_API_KEY")
     openai_status = "key-missing" if not openai_key else "ok"
 
     # Ollama status: attempt a quick version or tags request

@@ -8,6 +8,7 @@ from typing import List
 import psutil
 import os
 import subprocess
+import requests
 from datetime import datetime, timedelta
 
 from database import get_db
@@ -18,14 +19,78 @@ from auth_utils import get_current_active_user, require_admin
 router = APIRouter()
 
 
+def is_process_running(name: str) -> bool:
+    """Check if a process with the given name is running"""
+    for p in psutil.process_iter(["name"]):
+        try:
+            if p.info["name"] and name.lower() in p.info["name"].lower():
+                return True
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    return False
+
+
+def is_ollama_running() -> bool:
+    """Check if Ollama is running by checking both process and API"""
+    # Check the process
+    if is_process_running("ollama"):
+        # Check API port
+        try:
+            r = requests.get("http://localhost:11434/api/tags", timeout=1)
+            return r.status_code == 200
+        except:
+            return False
+    return False
+
+
+def is_tailscale_running() -> bool:
+    """Check if Tailscale process is running"""
+    # Process only (CLI does network)
+    return is_process_running("tailscaled") or is_process_running("tailscale")
+
+
+@router.get("/health/live")
+def system_health_live():
+    """
+    Get overall system health status (Ollama, Tailscale running checks).
+    No authentication required for ChatOps console.
+    """
+    return {
+        "backend": "ok",
+        "ollama_running": is_ollama_running(),
+        "tailscale_running": is_tailscale_running()
+    }
+
+
 @router.get("/tailscale/summary")
 async def get_tailscale_summary():
     """
     Get Tailscale network summary.
     No authentication required for ChatOps console.
+    
+    Note: Using simple process check instead of CLI parsing due to 
+    subprocess timeout issues when running tailscale status from uvicorn.
+    """
+    # Simple process-based check (reliable)
+    is_running = is_tailscale_running()
+    
+    return {
+        "devices_online": 1 if is_running else 0,
+        "devices_total": 1 if is_running else 0,
+        "exit_node": "none",
+        "last_check": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "status": "connected" if is_running else "disconnected"
+    }
+
+
+@router.get("/tailscale/snapshot")
+async def get_network_snapshot():
+    """
+    Get detailed network snapshot with device roles and real-time status.
+    Treats 'home-hub' as primary hub, 'home-hub-1' as dev hub.
+    No authentication required for AI context.
     """
     try:
-        # Try to get tailscale status
         result = subprocess.run(
             ["tailscale", "status", "--json"],
             capture_output=True,
@@ -37,58 +102,114 @@ async def get_tailscale_summary():
             import json
             status_data = json.loads(result.stdout)
             
-            # Parse the status
             peers = status_data.get("Peer", {})
             self_info = status_data.get("Self", {})
             
-            devices_online = len([p for p in peers.values() if p.get("Online", False)]) + 1  # +1 for self
-            devices_total = len(peers) + 1  # +1 for self
+            # Build device list with roles
+            devices = []
+            primary_hub_online = False
+            dev_hub_online = False
             
-            exit_node = "none"
-            if self_info.get("ExitNode"):
-                exit_node = self_info.get("ExitNodeOption", "enabled")
+            # Add self first
+            self_hostname = self_info.get("HostName", "unknown")
+            self_dnsname = self_info.get("DNSName", "unknown").rstrip(".")
+            self_ips = self_info.get("TailscaleIPs", [])
+            self_online = True  # Self is always "online" if we're running
+            
+            # Determine self role based on DNSName (more reliable than HostName)
+            self_role = "client"
+            dns_lower = self_dnsname.lower()
+            if "home-hub-1" in dns_lower:
+                self_role = "dev-hub"
+                dev_hub_online = True
+            elif "home-hub" in dns_lower:
+                self_role = "primary-hub"
+                primary_hub_online = True
+            
+            devices.append({
+                "id": self_info.get("PublicKey", "self")[:16],
+                "name": self_dnsname,
+                "ips": self_ips,
+                "online": True,
+                "role": self_role,
+                "is_self": True
+            })
+            
+            # Add peers
+            for peer_key, peer_data in peers.items():
+                peer_hostname = peer_data.get("HostName", "unknown")
+                peer_dnsname = peer_data.get("DNSName", "unknown").rstrip(".")
+                peer_ips = peer_data.get("TailscaleIPs", [])
+                peer_online = peer_data.get("Online", False)
+                
+                # Skip Tailscale infrastructure nodes (funnel-ingress-node)
+                if "funnel-ingress-node" in peer_hostname.lower():
+                    continue
+                
+                # Determine peer role based on DNSName
+                peer_role = "client"
+                dns_lower = peer_dnsname.lower()
+                if "home-hub-1" in dns_lower:
+                    peer_role = "dev-hub"
+                    if peer_online:
+                        dev_hub_online = True
+                elif "home-hub" in dns_lower:
+                    peer_role = "primary-hub"
+                    if peer_online:
+                        primary_hub_online = True
+                
+                devices.append({
+                    "id": peer_key[:16],
+                    "name": peer_dnsname,
+                    "ips": peer_ips,
+                    "online": peer_online,
+                    "role": peer_role,
+                    "is_self": False
+                })
+            
+            # Filter to online devices for summary
+            online_devices = [d for d in devices if d["online"]]
             
             return {
-                "devices_online": devices_online,
-                "devices_total": devices_total,
-                "exit_node": exit_node,
-                "last_check": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "status": "connected"
+                "devices": devices,
+                "online_count": len(online_devices),
+                "total_count": len(devices),
+                "primary_hub_online": primary_hub_online,
+                "dev_hub_online": dev_hub_online,
+                "timestamp": datetime.now().isoformat(),
+                "status": "ok"
             }
         else:
-            # Tailscale not running or error
             return {
-                "devices_online": 0,
-                "devices_total": 0,
-                "exit_node": "none",
-                "last_check": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "status": "disconnected",
-                "error": "Tailscale not running or not installed"
+                "devices": [],
+                "online_count": 0,
+                "total_count": 0,
+                "primary_hub_online": False,
+                "dev_hub_online": False,
+                "timestamp": datetime.now().isoformat(),
+                "status": "tailscale_not_running",
+                "error": result.stderr.strip() or "Tailscale not running"
             }
-    except subprocess.TimeoutExpired:
-        return {
-            "devices_online": 0,
-            "devices_total": 0,
-            "exit_node": "none",
-            "last_check": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "status": "timeout",
-            "error": "Tailscale command timed out"
-        }
+    
     except FileNotFoundError:
         return {
-            "devices_online": 0,
-            "devices_total": 0,
-            "exit_node": "none",
-            "last_check": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "status": "not_installed",
-            "error": "Tailscale not found on system"
+            "devices": [],
+            "online_count": 0,
+            "total_count": 0,
+            "primary_hub_online": False,
+            "dev_hub_online": False,
+            "timestamp": datetime.now().isoformat(),
+            "status": "tailscale_not_installed",
+            "error": "Tailscale binary not found"
         }
     except Exception as e:
         return {
-            "devices_online": 0,
-            "devices_total": 0,
-            "exit_node": "none",
-            "last_check": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "devices": [],
+            "online_count": 0,
+            "total_count": 0,
+            "primary_hub_online": False,
+            "dev_hub_online": False,
+            "timestamp": datetime.now().isoformat(),
             "status": "error",
             "error": str(e)
         }

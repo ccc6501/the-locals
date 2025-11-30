@@ -15,8 +15,19 @@ from schemas import (
     UserPermissionResponse, UserPresenceResponse
 )
 from auth_utils import get_current_active_user, require_admin, require_moderator, get_password_hash
+from auth.current_user import get_current_user
 
 router = APIRouter()
+
+
+@router.get("/me", response_model=UserResponse)
+async def get_me(db: Session = Depends(get_db)):
+    """
+    Get current user information.
+    For Phase 4A, always returns Chance (no auth yet).
+    """
+    current_user = get_current_user(db)
+    return current_user
 
 
 @router.get("/admin/summary")
@@ -85,11 +96,13 @@ async def get_public_user_count(db: Session = Depends(get_db)):
 
 @router.get("", response_model=List[UserResponse], response_model_by_alias=True)
 async def get_users(
-    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Get all users with device information"""
     from datetime import datetime, timedelta
+    
+    # Phase 4A: Use hardcoded current user (no auth required for now)
+    current_user = get_current_user(db)
     
     users = db.query(User).all()
     

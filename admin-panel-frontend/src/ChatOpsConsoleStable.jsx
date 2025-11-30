@@ -4,15 +4,18 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useChatPersistence } from './hooks/useChatPersistence';
 import { useProviderStatus } from './hooks/useProviderStatus';
+import { useCurrentUser } from './hooks/useCurrentUser';
+import { useRoomMembers } from './hooks/useRoomMembers';
+import { useRoomsContext } from './context/RoomsContext';
+import ChatRoomList from './ChatRoomList';
 import { ErrorToasts } from './components/ErrorToasts';
 import { ConnectionsPanel } from './components/ConnectionsPanel';
 import { DashboardPanel } from './components/DashboardPanel';
 import { SystemPanel } from './components/SystemPanel';
 import { CloudPanel } from './components/CloudPanel';
-import { UserAvatar } from './components/UserAvatar';
-import { RoomList } from './components/RoomList';
-import { RoomHeader } from './components/RoomHeader';
-import { UserProfileSwitcher } from './components/UserProfileSwitcher';
+import RoomMembersPanel from './components/RoomMembersPanel';
+import RoomSettingsPanel from './components/RoomSettingsPanel';
+import UsersView from './components/UsersView';
 import {
     Bot,
     Menu,
@@ -21,6 +24,7 @@ import {
     Share2,
     BarChart3,
     User,
+    Users,
     UserCircle,
     Cloud,
     Wifi,
@@ -28,7 +32,10 @@ import {
     Settings,
     Key,
     Cpu,
-    X
+    X,
+    Plus,
+    Info,
+    Clock
 } from 'lucide-react';
 
 // Helpers
@@ -104,9 +111,25 @@ const ChatOpsConsoleStable = () => {
     const messagesContainerRef = useRef(null);
     const inputRef = useRef(null);
 
+    // Current user
+    const { currentUser, loading: userLoading } = useCurrentUser();
+
+    // Rooms (persistent from /api/rooms) - now from context
+    const { rooms, setRooms, activeRoomId, setActiveRoomId, createRoom, refreshRooms, loading: roomsLoading } = useRoomsContext();
+
+    // Room members for active room
+    const { members, loading: membersLoading, error: membersError } = useRoomMembers(activeRoomId);
+
+    // Compute current user's membership and permissions
+    const currentMembership = members.find(m => m.user_id === currentUser?.id);
+    const isGlobalAdmin = currentUser?.role === 'admin';
+    const canManageMembers = isGlobalAdmin || (currentMembership && (currentMembership.role === 'owner' || currentMembership.role === 'admin'));
+
     // Views
     const [activeView, setActiveView] = useState('chat');
     const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+    const [showMembersPanel, setShowMembersPanel] = useState(false);
+    const [showSettingsPanel, setShowSettingsPanel] = useState(false);
 
     // Provider / model
     const [provider, setProvider] = useState(() => localStorage.getItem('theLocal.provider') || 'openai');
@@ -130,6 +153,7 @@ const ChatOpsConsoleStable = () => {
     const [logs, setLogs] = useState([]);
     const [ollamaStatus, setOllamaStatus] = useState(null);
     const [errors, setErrors] = useState([]); // toast errors
+    const [countdownRefresh, setCountdownRefresh] = useState(0); // Phase 6B: Trigger countdown badge refresh
 
     // Provider meta + polling via hook
     const providerMeta = useProviderStatus({
@@ -152,20 +176,6 @@ const ChatOpsConsoleStable = () => {
     const [cloudPath, setCloudPath] = useState(() => localStorage.getItem('theLocal.cloudPath') || '/mnt/data');
     const [cloudEndpoint, setCloudEndpoint] = useState(() => localStorage.getItem('theLocal.cloudEndpoint') || '');
 
-    // Multi-user & room state
-    const [currentUser, setCurrentUser] = useState(() => {
-        const stored = localStorage.getItem('theLocal.currentUser');
-        return stored ? JSON.parse(stored) : null;
-    });
-    const [users, setUsers] = useState([]);
-    const [rooms, setRooms] = useState([]);
-    const [currentRoom, setCurrentRoom] = useState(() => {
-        const stored = localStorage.getItem('theLocal.currentRoom');
-        return stored ? JSON.parse(stored) : null;
-    });
-    const [unreadCounts, setUnreadCounts] = useState({});
-    const [roomsLoading, setRoomsLoading] = useState(false);
-
     // Helper to push error to toast list
     const pushError = (msg) => {
         setErrors(prev => [{ id: `e-${Date.now()}`, message: msg }, ...prev.slice(0, 9)]);
@@ -179,15 +189,45 @@ const ChatOpsConsoleStable = () => {
     useEffect(() => localStorage.setItem('theLocal.ollamaModel', ollamaModel), [ollamaModel]);
     useEffect(() => localStorage.setItem('theLocal.cloudPath', cloudPath), [cloudPath]);
     useEffect(() => localStorage.setItem('theLocal.cloudEndpoint', cloudEndpoint), [cloudEndpoint]);
-    useEffect(() => {
-        if (currentUser) localStorage.setItem('theLocal.currentUser', JSON.stringify(currentUser));
-    }, [currentUser]);
-    useEffect(() => {
-        if (currentRoom) localStorage.setItem('theLocal.currentRoom', JSON.stringify(currentRoom));
-    }, [currentRoom]);
 
     // Scroll
     useEffect(() => { const c = messagesContainerRef.current; if (c) c.scrollTop = c.scrollHeight; }, [messages]);
+
+    // Phase 6B: Refresh rooms when switching back to chat view (in case admin deleted/updated rooms)
+    useEffect(() => {
+        if (activeView === 'chat' && refreshRooms) {
+            refreshRooms();
+        }
+    }, [activeView, refreshRooms]);
+
+    // Load messages when active room changes
+    useEffect(() => {
+        if (!activeRoomId) return;
+
+        const loadRoomMessages = async () => {
+            try {
+                const res = await fetch(`/api/rooms/${activeRoomId}/messages?limit=50`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const dbMessages = await res.json();
+
+                // Transform DB messages to UI format: {id, thread_id, user_id, sender, text, timestamp} → {id, role, authorTag, text, createdAt}
+                const uiMessages = dbMessages.map(msg => ({
+                    id: `msg-${msg.id}`,
+                    role: msg.sender === 'CC' ? 'user' : 'assistant',
+                    authorTag: msg.sender || 'TL',
+                    text: msg.text,
+                    createdAt: msg.timestamp,
+                }));
+
+                setMessages(uiMessages);
+            } catch (err) {
+                console.error('Failed to load room messages:', err);
+                pushError('Could not load room messages');
+            }
+        };
+
+        loadRoomMessages();
+    }, [activeRoomId]);
 
     // Resolve API base dynamically on mount then trigger initial fetches
     useEffect(() => {
@@ -199,27 +239,20 @@ const ChatOpsConsoleStable = () => {
             refreshSystemSummary();
             refreshUserCount();
             refreshLogs();
-            refreshUsers();
-            refreshRooms();
         })();
     }, []);
     useEffect(() => {
-        const interval = setInterval(() => {
-            refreshTailnetStats();
-            refreshSystemSummary();
-            refreshUserCount();
-            refreshLogs();
-            refreshUnreadCounts();
-        }, 30000);
+        const interval = setInterval(() => { refreshTailnetStats(); refreshSystemSummary(); refreshUserCount(); refreshLogs(); }, 30000);
         return () => clearInterval(interval);
-    }, [currentUser, rooms]);
+    }, []);
 
-    // Refresh rooms when user changes
+    // Phase 6B: Refresh countdown badge every minute to update time remaining
     useEffect(() => {
-        if (currentUser) {
-            refreshRooms();
-        }
-    }, [currentUser]);
+        const interval = setInterval(() => {
+            setCountdownRefresh(prev => prev + 1);
+        }, 60000); // 60 seconds
+        return () => clearInterval(interval);
+    }, []);
 
     const refreshOllamaModels = async () => {
         setOllamaModelsLoading(true);
@@ -287,129 +320,11 @@ const ChatOpsConsoleStable = () => {
         } catch (e) { /* ignore */ }
     };
 
-    const refreshRooms = async () => {
-        setRoomsLoading(true);
-        try {
-            const token = resolveToken();
-            const res = await fetch(`${API_BASE}/api/rooms`, {
-                headers: token ? { 'Authorization': `Bearer ${token}` } : {}
-            });
-            if (!res.ok) {
-                // If we get 401/403, might need user setup
-                if (res.status === 401 || res.status === 403) {
-                    console.warn('Rooms require authentication. Run init_multi_user.py to set up users.');
-                }
-                throw new Error(`Rooms ${res.status}`);
-            }
-            const data = await res.json();
-            setRooms(data || []);
-
-            // Auto-select first room if none selected
-            if (!currentRoom && data.length > 0) {
-                setCurrentRoom(data[0]);
-            }
-        } catch (e) {
-            console.error('Failed to load rooms:', e);
-            // Don't show error toast on every failed load - it's expected if DB not initialized
-            if (!e.message.includes('401') && !e.message.includes('403')) {
-                pushError(`Failed to load rooms: ${e.message}`);
-            }
-        } finally {
-            setRoomsLoading(false);
-        }
-    };
-
-    const refreshUsers = async () => {
-        try {
-            const token = resolveToken();
-            const res = await fetch(`${API_BASE}/api/users`, {
-                headers: token ? { 'Authorization': `Bearer ${token}` } : {}
-            });
-            if (!res.ok) throw new Error(`Users ${res.status}`);
-            const data = await res.json();
-            setUsers(data || []);
-
-            // Auto-select current user if not set
-            if (!currentUser && data.length > 0) {
-                // Find owner or first user
-                const owner = data.find(u => u.role === 'owner') || data[0];
-                setCurrentUser(owner);
-            }
-        } catch (e) {
-            console.error('Failed to load users:', e);
-        }
-    };
-
-    const refreshUnreadCounts = async () => {
-        if (!currentUser || !rooms.length) return;
-
-        try {
-            const token = resolveToken();
-            const counts = {};
-
-            // Fetch unread count for each room
-            await Promise.all(
-                rooms.map(async (room) => {
-                    try {
-                        const res = await fetch(`${API_BASE}/api/rooms/${room.id}/unread-count`, {
-                            headers: token ? { 'Authorization': `Bearer ${token}` } : {}
-                        });
-                        if (res.ok) {
-                            const data = await res.json();
-                            counts[room.id] = data.unread_count || 0;
-                        }
-                    } catch (e) {
-                        console.warn(`Failed to get unread count for room ${room.id}:`, e);
-                    }
-                })
-            );
-
-            setUnreadCounts(counts);
-        } catch (e) {
-            console.error('Failed to refresh unread counts:', e);
-        }
-    };
-
     const resolveToken = () => {
         const candidates = ['chatops_token', 'auth_token', 'jwt', 'access_token'];
         for (const k of candidates) { const v = localStorage.getItem(k); if (v) return v; }
         return null;
     };
-
-    const createRoom = async (slug, name) => {
-        try {
-            const token = resolveToken();
-            const res = await fetch(`${API_BASE}/api/rooms`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-                },
-                body: JSON.stringify({
-                    slug,
-                    name,
-                    type: 'group',
-                    icon: '💬',
-                    color: '#8b5cf6'
-                })
-            });
-
-            if (!res.ok) {
-                const error = await res.text();
-                throw new Error(`Failed to create room: ${error}`);
-            }
-
-            const newRoom = await res.json();
-            setRooms(prev => [...prev, newRoom]);
-            setCurrentRoom(newRoom);
-            setActiveView('chat');
-            pushError(`Room "${name}" created!`);
-        } catch (e) {
-            console.error('Failed to create room:', e);
-            pushError(e.message);
-        }
-    };
-
     const refreshLogs = async () => {
         const token = resolveToken();
         if (!token) { setLogs(null); return; }
@@ -426,24 +341,14 @@ const ChatOpsConsoleStable = () => {
         if (provider === 'openai' && !openaiKey) effectiveProvider = 'ollama';
         let selectedModel = effectiveProvider === 'openai' ? openaiModel : ollamaModel;
         if (effectiveProvider === 'ollama' && (!selectedModel || !ollamaModels.includes(selectedModel))) { effectiveProvider = 'openai'; selectedModel = openaiModel; }
-
-        // Build payload with room context
         const payload = {
             message: text,
             provider: effectiveProvider,
             temperature: temp,
-            config: effectiveProvider === 'openai'
-                ? { api_key: openaiKey || undefined, model: selectedModel }
-                : { base_url: ollamaUrl, model: selectedModel },
-            room_id: currentRoom?.id,
-            user_id: currentUser?.id
+            thread_id: activeRoomId, // Include room ID for persistence
+            config: effectiveProvider === 'openai' ? { api_key: openaiKey || undefined, model: selectedModel } : { base_url: ollamaUrl, model: selectedModel }
         };
-
-        const res = await fetch(`${API_BASE}/api/chat/chat`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
+        const res = await fetch('/api/chat/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
     };
@@ -451,26 +356,35 @@ const ChatOpsConsoleStable = () => {
     const handleSend = async () => {
         const text = draftMessage.trim();
         if (!text || isSending) return;
+        if (!activeRoomId) {
+            pushError('No active room selected');
+            return;
+        }
+
         setIsSending(true);
-        const userMsg = { id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`, role: 'user', authorTag: currentUser?.initials || 'CC', text, createdAt: new Date().toISOString() };
+        const userMsg = { id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`, role: 'user', authorTag: 'CC', text, createdAt: new Date().toISOString() };
         setMessages(prev => [...prev, userMsg]);
         setDraftMessage('');
         if (inputRef.current) setTimeout(() => inputRef.current && inputRef.current.blur(), 0);
+
         try {
+            // Persist user message to database
+            const persistRes = await fetch(`/api/rooms/${activeRoomId}/messages`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text })
+            });
+            if (!persistRes.ok) throw new Error(`Failed to persist user message: HTTP ${persistRes.status}`);
+
+            // Send to chat endpoint (assistant reply will be auto-persisted via thread_id)
             const reply = await sendMessageToBackend(text);
             const assistantText = getDisplayText(reply);
-            const assistantTag = reply.authorTag || 'TL';
-            const assistantMsg = { id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`, role: 'assistant', authorTag: assistantTag, text: assistantText, createdAt: new Date().toISOString() };
+            const assistantMsg = { id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`, role: 'assistant', authorTag: 'TL', text: assistantText, createdAt: new Date().toISOString() };
             setMessages(prev => [...prev, assistantMsg]);
             setAiRequestCount(prev => {
                 const next = prev + 1; localStorage.setItem('theLocal.aiRequestCount', String(next)); return next;
             });
             setLastChatOk(true);
-
-            // Mark room as read after sending
-            if (currentRoom?.id && currentUser?.id) {
-                markRoomAsRead(currentRoom.id);
-            }
         } catch (err) {
             console.error(err);
             setLastChatOk(false);
@@ -480,35 +394,34 @@ const ChatOpsConsoleStable = () => {
         } finally { setIsSending(false); }
     };
 
-    const handleRoomSelect = (room) => {
-        setCurrentRoom(room);
-        // Clear messages and load room history (for now just clear)
-        setMessages([]);
-        // Mark as read
-        markRoomAsRead(room.id);
+    const handleKeyDown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } };
+
+    // Phase 6 & 6B: Room settings handlers
+    const handleRoomUpdated = (updatedRoom) => {
+        // Update the room in the rooms list
+        setRooms(prevRooms =>
+            prevRooms.map(r => r.id === updatedRoom.id ? { ...r, ...updatedRoom } : r)
+        );
     };
 
-    const handleUserSelect = (user) => {
-        setCurrentUser(user);
-        // Rooms will reload via useEffect
-    };
+    const handleRoomDeleted = (roomId) => {
+        // Remove room from list
+        setRooms(prevRooms => prevRooms.filter(r => r.id !== roomId));
 
-    const markRoomAsRead = async (roomId) => {
-        if (!currentUser) return;
-        try {
-            const token = resolveToken();
-            await fetch(`${API_BASE}/api/rooms/${roomId}/read`, {
-                method: 'PATCH',
-                headers: token ? { 'Authorization': `Bearer ${token}` } : {}
-            });
-            // Update unread count locally
-            setUnreadCounts(prev => ({ ...prev, [roomId]: 0 }));
-        } catch (e) {
-            console.warn('Failed to mark room as read:', e);
+        // Switch to a different room or default view
+        if (rooms && rooms.length > 1) {
+            const nextRoom = rooms.find(r => r.id !== roomId);
+            if (nextRoom) {
+                setActiveRoomId(nextRoom.id);
+            } else {
+                setActiveRoomId(null);
+                setActiveView('dashboard');
+            }
+        } else {
+            setActiveRoomId(null);
+            setActiveView('dashboard');
         }
     };
-
-    const handleKeyDown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } };
 
     const renderMessages = () => (
         <div className="space-y-3">
@@ -560,15 +473,6 @@ const ChatOpsConsoleStable = () => {
                     </div>
                 </div>
                 <div className="flex items-center gap-3">
-                    {/* User Profile Switcher */}
-                    {currentUser && users.length > 0 && (
-                        <UserProfileSwitcher
-                            users={users}
-                            currentUser={currentUser}
-                            onUserSelect={handleUserSelect}
-                        />
-                    )}
-
                     <button type="button" onClick={() => setProvider(prev => prev === 'openai' ? 'ollama' : 'openai')} className="flex items-center gap-1.5 px-3 py-2 rounded-lg border text-[11px] font-medium transition-colors active:scale-[0.97] bg-slate-800/60 border-slate-700/60 hover:bg-slate-700/60" aria-label="Toggle AI provider">
                         <Cpu className="w-3.5 h-3.5 text-slate-300" />
                         {/* Key presence dot for OpenAI */}
@@ -585,6 +489,13 @@ const ChatOpsConsoleStable = () => {
                         <span className="hidden sm:inline">Tailnet</span>
                         <span className="uppercase tracking-wide text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-slate-900/50">{tailnetStatus === 'online' ? 'OK' : tailnetStatus === 'offline' ? 'DOWN' : 'WAIT'}</span>
                     </div>
+                    {currentUser && (
+                        <div className="hidden lg:flex items-center gap-1.5 px-3 py-2 rounded-lg border bg-slate-800/70 border-slate-700 text-slate-300 text-[11px] font-medium">
+                            <UserCircle className="w-3.5 h-3.5" />
+                            <span className="font-semibold">{currentUser.name}</span>
+                            <span className="text-slate-400">{currentUser.handle}</span>
+                        </div>
+                    )}
                     <button onClick={() => setMobileMenuOpen(true)} className="h-10 w-10 rounded-xl bg-slate-900/80 border border-slate-700 flex items-center justify-center" aria-label="Open drawer">
                         <Menu className="w-4 h-4 text-slate-100" />
                     </button>
@@ -603,6 +514,16 @@ const ChatOpsConsoleStable = () => {
                             <button onClick={() => setMobileMenuOpen(false)} className="p-1 rounded-lg hover:bg-slate-800/60"><X className="w-5 h-5 text-slate-400" /></button>
                         </div>
                         <div className="px-4 pb-3 space-y-2 text-[11px] text-slate-400 flex-1 overflow-y-auto">
+                            {currentUser && (
+                                <div className="rounded-lg border border-slate-800/70 bg-slate-950/40 px-3 py-2 backdrop-blur-sm mb-3">
+                                    <div className="flex items-center gap-2">
+                                        <UserCircle className="w-4 h-4 text-violet-400" />
+                                        <span className="text-slate-300 font-semibold">{currentUser.name}</span>
+                                        <span className="text-slate-500">{currentUser.handle}</span>
+                                    </div>
+                                    <div className="text-[10px] text-slate-500 mt-1">Role: <span className="text-slate-400 uppercase">{currentUser.role}</span></div>
+                                </div>
+                            )}
                             <div className="rounded-lg border border-slate-800/70 bg-slate-950/40 px-3 py-2 backdrop-blur-sm">
                                 <div className="flex items-center gap-2">
                                     <Wifi className="w-3.5 h-3.5 text-slate-500" />
@@ -634,161 +555,172 @@ const ChatOpsConsoleStable = () => {
                             </div>
                         </div>
                         <nav className="p-4 flex-none space-y-2 border-t border-slate-800/60 bg-slate-950/50 backdrop-blur-md">
-                            {['dashboard', 'chat', 'rooms', 'connections', 'cloud', 'stats', 'system', 'profile', 'settings'].map(view => (
+                            {['dashboard', 'chat', 'connections', 'cloud', 'stats', 'users', 'system', 'profile', 'settings'].map(view => (
                                 <button key={view} onClick={() => { setActiveView(view); setMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-sm font-medium transition-all ${activeView === view ? 'bg-gradient-to-r from-violet-600 to-sky-600 text-white shadow-lg' : 'text-slate-300 hover:bg-slate-800/70'}`}>
                                     {view === 'dashboard' && <Home className="w-5 h-5" />}
                                     {view === 'chat' && <MessageSquare className="w-5 h-5" />}
-                                    {view === 'rooms' && <MessageSquare className="w-5 h-5" />}
                                     {view === 'connections' && <Share2 className="w-5 h-5" />}
                                     {view === 'cloud' && <Cloud className="w-5 h-5" />}
                                     {view === 'stats' && <BarChart3 className="w-5 h-5" />}
+                                    {view === 'users' && <Users className="w-5 h-5" />}
                                     {view === 'system' && <User className="w-5 h-5" />}
                                     {view === 'profile' && <UserCircle className="w-5 h-5" />}
                                     {view === 'settings' && <Settings className="w-5 h-5" />}
                                     <span className="capitalize">{view}</span>
                                 </button>
                             ))}
+
+                            {/* Rooms section - only visible on mobile */}
+                            <div className="mt-6 pt-4 border-t border-slate-800/60 lg:hidden flex flex-col min-h-0">
+                                <div className="flex items-center justify-between mb-3 px-2 flex-none">
+                                    <div className="text-xs tracking-[0.2em] uppercase text-slate-500">
+                                        Rooms
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={async () => {
+                                            const name = window.prompt('New room name?');
+                                            if (!name || !name.trim()) return;
+                                            try {
+                                                await createRoom(name.trim());
+                                                setActiveView('chat');
+                                            } catch (err) {
+                                                console.error('Failed to create room:', err);
+                                                alert('Failed to create room. Please try again.');
+                                            }
+                                        }}
+                                        className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px]
+                                         bg-slate-800/70 border border-slate-700/70 text-slate-300
+                                         hover:bg-slate-700/70 active:scale-95 transition-all"
+                                    >
+                                        <Plus className="w-3 h-3" />
+                                        New
+                                    </button>
+                                </div>
+                                <div className="overflow-y-auto flex-1 min-h-0">
+                                    {rooms.length === 0 && (
+                                        <div className="text-xs text-slate-400 px-2 py-2">No rooms yet.</div>
+                                    )}
+                                    {rooms.map((room) => (
+                                        <button
+                                            key={room.id}
+                                            className={
+                                                "w-full text-left text-sm px-3 py-2.5 rounded-lg mb-1 transition-all flex items-center gap-2 " +
+                                                (room.id === activeRoomId
+                                                    ? "bg-slate-800 text-slate-50 border border-purple-500/60"
+                                                    : "bg-transparent text-slate-300 hover:bg-slate-800/50")
+                                            }
+                                            onClick={() => {
+                                                setActiveRoomId(room.id);
+                                                setActiveView('chat'); // Switch to chat view
+                                                setMobileMenuOpen(false); // Close drawer
+                                            }}
+                                        >
+                                            <MessageSquare className="w-4 h-4 text-slate-400" />
+                                            <span className="flex-1 truncate">{room.name || `Room ${room.id}`}</span>
+                                            <span className="text-[10px] text-slate-500 uppercase">{room.id}</span>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
                         </nav>
                     </div>
                 </>
             )}
 
             <main className="chat-app-main">
-                <div className="flex flex-1 min-h-0">
-                    {/* Main Content Area */}
-                    <div className="flex-1 flex flex-col min-h-0">
-                        {/* Room Header - Only show in chat view when room selected */}
-                        {activeView === 'chat' && currentRoom && (
-                            <RoomHeader
-                                room={currentRoom}
-                                aiConfig={currentRoom.ai_config ? JSON.parse(currentRoom.ai_config) : {}}
+                {activeView === 'chat' ? (
+                    <div className="flex h-full gap-0">
+                        {/* Room List Sidebar - hidden on mobile (< lg), visible on desktop (lg+) */}
+                        <aside className="hidden lg:block lg:w-64 lg:min-w-[220px] lg:max-w-[280px] border-r border-slate-800/60 overflow-y-auto p-3">
+                            <ChatRoomList
+                                rooms={rooms}
+                                activeRoomId={activeRoomId}
+                                onSelectRoom={setActiveRoomId}
+                                onCreateRoom={createRoom}
+                                loading={roomsLoading}
                             />
-                        )}
+                        </aside>
 
-                        {/* Messages/Content Area */}
-                        <div className="chat-scroll-area flex-1" ref={messagesContainerRef}>
-                            {activeView === 'chat' && renderMessages()}
-                            {activeView === 'dashboard' && <DashboardPanel recentMessages={messages} logs={logs} />}
-                            {activeView === 'rooms' && (
-                                <div className="p-6 max-w-4xl mx-auto w-full">
-                                    <div className="flex items-center justify-between mb-6">
-                                        <h2 className="text-2xl font-bold text-white">Rooms</h2>
-                                        <button
-                                            onClick={() => {
-                                                const name = prompt('Room name:');
-                                                if (!name) return;
-                                                const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-                                                createRoom(slug, name);
-                                            }}
-                                            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-violet-600 to-sky-600 text-white font-medium hover:from-violet-700 hover:to-sky-700 transition-all"
-                                        >
-                                            <MessageSquare className="w-4 h-4" />
-                                            Create Room
-                                        </button>
-                                    </div>
-                                    
-                                    {roomsLoading ? (
-                                        <div className="text-center text-slate-400 py-12">
-                                            <RefreshCw className="w-8 h-8 mx-auto mb-3 animate-spin opacity-50" />
-                                            <p>Loading rooms...</p>
-                                        </div>
-                                    ) : rooms.length === 0 ? (
-                                        <div className="text-center text-slate-400 py-12">
-                                            <MessageSquare className="w-12 h-12 mx-auto mb-4 opacity-30" />
-                                            <p className="text-lg mb-2">No rooms yet</p>
-                                            <p className="text-sm text-slate-500">Create your first room or run init_multi_user.py to set up default rooms</p>
-                                        </div>
-                                    ) : (
-                                        <div className="grid gap-3">
-                                            {rooms.map(room => {
-                                                const unreadCount = unreadCounts[room.id] || 0;
-                                                const isActive = currentRoom?.id === room.id;
-                                                
-                                                return (
-                                                    <button
-                                                        key={room.id}
-                                                        onClick={() => {
-                                                            handleRoomSelect(room);
-                                                            setActiveView('chat');
-                                                        }}
-                                                        className={`flex items-center gap-4 p-4 rounded-xl border transition-all text-left ${
-                                                            isActive
-                                                                ? 'bg-gradient-to-r from-violet-600 to-sky-600 border-violet-500 text-white'
-                                                                : 'bg-slate-900/50 border-slate-800 text-slate-300 hover:bg-slate-800/70 hover:border-slate-700'
-                                                        }`}
-                                                    >
-                                                        <div className={`flex-shrink-0 w-12 h-12 rounded-xl flex items-center justify-center ${
-                                                            isActive ? 'bg-white/20' : 'bg-slate-800'
-                                                        }`}>
-                                                            {room.type === 'system' && <MessageSquare className="w-6 h-6" />}
-                                                            {room.type === 'dm' && <User className="w-6 h-6" />}
-                                                            {room.type === 'group' && <User className="w-6 h-6" />}
-                                                        </div>
-                                                        
-                                                        <div className="flex-1 min-w-0">
-                                                            <div className="flex items-center gap-2 mb-1">
-                                                                <span className="font-semibold text-sm">{room.name}</span>
-                                                                {room.is_system && (
-                                                                    <span className="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-400">System</span>
-                                                                )}
-                                                            </div>
-                                                            {room.slug && (
-                                                                <span className="text-xs text-slate-400">#{room.slug}</span>
-                                                            )}
-                                                        </div>
-                                                        
-                                                        {unreadCount > 0 && (
-                                                            <div className="flex-shrink-0 bg-rose-500 text-white text-xs font-bold rounded-full min-w-[24px] h-6 flex items-center justify-center px-2">
-                                                                {unreadCount > 99 ? '99+' : unreadCount}
-                                                            </div>
-                                                        )}
-                                                    </button>
-                                                );
-                                            })}
-                                        </div>
+                        {/* Chat Main Pane */}
+                        <div className="flex-1 flex flex-col overflow-hidden">
+                            {/* Chat Header with Room Info */}
+                            <div className="flex items-center justify-between px-4 py-2 border-b border-slate-800/60 bg-slate-900/40">
+                                <div className="flex items-center gap-2">
+                                    <MessageSquare className="w-4 h-4 text-slate-500" />
+                                    <span className="text-sm font-medium text-slate-300">
+                                        {rooms.find(r => r.id === activeRoomId)?.name || 'Chat'}
+                                    </span>
+                                    {rooms.find(r => r.id === activeRoomId)?.memberCount !== undefined && (
+                                        <span className="text-xs text-slate-500">
+                                            ({rooms.find(r => r.id === activeRoomId)?.memberCount} members)
+                                        </span>
                                     )}
-                                </div>
-                            )}
-                            {activeView === 'connections' && (
-                                <ConnectionsPanel
-                                    provider={provider}
-                                    setProvider={setProvider}
-                                    openaiKey={openaiKey}
-                                    setOpenaiKey={setOpenaiKey}
-                                    openaiModel={openaiModel}
-                                    setOpenaiModel={setOpenaiModel}
-                                    ollamaUrl={ollamaUrl}
-                                    setOllamaUrl={setOllamaUrl}
-                                    ollamaModel={ollamaModel}
-                                    setOllamaModel={setOllamaModel}
-                                    ollamaModels={ollamaModels}
-                                    ollamaModelsLoading={ollamaModelsLoading}
-                                    refreshOllamaModels={refreshOllamaModels}
-                                    temp={temp}
-                                    setTemp={setTemp}
-                                    providerMeta={providerMeta}
-                                    cloudPath={cloudPath}
-                                    setCloudPath={setCloudPath}
-                                    cloudEndpoint={cloudEndpoint}
-                                    setCloudEndpoint={setCloudEndpoint}
-                                    tailnetStats={tailnetStats}
-                                    tailnetLoading={tailnetLoading}
-                                    tailnetError={tailnetError}
-                                    refreshTailnetStats={refreshTailnetStats}
-                                    apiBase={API_BASE}
-                                />
-                            )}
-                            {activeView === 'system' && <SystemPanel tailnetStats={tailnetStats} refreshTailnetStats={refreshTailnetStats} exitNodeChanging={tailnetLoading} setExitNodeChanging={setTailnetLoading} />}
-                            {activeView === 'cloud' && <CloudPanel apiBase={API_BASE} />}
-                            {activeView !== 'chat' && activeView !== 'connections' && activeView !== 'dashboard' && activeView !== 'system' && activeView !== 'cloud' && activeView !== 'rooms' && <ViewPlaceholder view={activeView} />}
-                        </div>
+                                    {/* Phase 6B: Self-Destruct Countdown Badge */}
+                                    {(() => {
+                                        const room = rooms.find(r => r.id === activeRoomId);
+                                        if (!room?.self_destruct_at) return null;
 
-                        {/* Chat Input - Only show in chat view */}
-                        {activeView === 'chat' && (
+                                        const destructTime = new Date(room.self_destruct_at);
+                                        const now = new Date();
+                                        const diff = destructTime - now;
+
+                                        if (diff <= 0) return null; // Already expired
+
+                                        const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+                                        const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+                                        const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+
+                                        const isUrgent = diff < (24 * 60 * 60 * 1000); // Less than 24 hours
+                                        const timeStr = days > 0 ? `${days}d ${hours}h` : hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+
+                                        return (
+                                            <button
+                                                onClick={() => canManageMembers && setShowSettingsPanel(true)}
+                                                className={`flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${isUrgent
+                                                    ? 'bg-red-500/20 text-red-400 border border-red-500/30'
+                                                    : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                                                    } ${canManageMembers ? 'cursor-pointer hover:opacity-80' : 'cursor-default'}`}
+                                                title={canManageMembers ? 'Click to extend or cancel' : `Expires in ${timeStr}`}
+                                            >
+                                                <Clock className="w-3 h-3" />
+                                                <span>{timeStr}</span>
+                                            </button>
+                                        );
+                                    })()}
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    {canManageMembers && (
+                                        <button
+                                            onClick={() => setShowSettingsPanel(true)}
+                                            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all bg-slate-800/60 text-slate-400 border border-slate-700/60 hover:bg-slate-700/60 hover:text-slate-300"
+                                            aria-label="Room settings"
+                                        >
+                                            <Settings className="w-3.5 h-3.5" />
+                                            <span className="hidden sm:inline">Settings</span>
+                                        </button>
+                                    )}
+                                    <button
+                                        onClick={() => setShowMembersPanel(!showMembersPanel)}
+                                        className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all ${showMembersPanel
+                                            ? 'bg-violet-500/20 text-violet-300 border border-violet-500/30'
+                                            : 'bg-slate-800/60 text-slate-400 border border-slate-700/60 hover:bg-slate-700/60 hover:text-slate-300'
+                                            }`}
+                                        aria-label="Room info"
+                                    >
+                                        <Info className="w-3.5 h-3.5" />
+                                        <span className="hidden sm:inline">Info</span>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div className="chat-scroll-area flex-1" ref={messagesContainerRef}>
+                                {renderMessages()}
+                            </div>
                             <div className="chat-input-wrapper">
                                 <div className="chat-input-inner">
-                                    <textarea className="chat-input-field" rows={1} placeholder={currentRoom ? `Message ${currentRoom.slug || currentRoom.name}...` : "Select a room to chat..."} value={draftMessage} onChange={e => setDraftMessage(e.target.value)} onKeyDown={handleKeyDown} ref={inputRef} disabled={!currentRoom} />
-                                    <button className="chat-send-button" disabled={isSending || !draftMessage.trim() || !currentRoom} onClick={handleSend} aria-label="Send message">
+                                    <textarea className="chat-input-field" rows={1} placeholder="Message the room..." value={draftMessage} onChange={e => setDraftMessage(e.target.value)} onKeyDown={handleKeyDown} ref={inputRef} />
+                                    <button className="chat-send-button" disabled={isSending || !draftMessage.trim()} onClick={handleSend} aria-label="Send message">
                                         <span className="chat-send-icon">➤</span>
                                     </button>
                                     <button
@@ -796,7 +728,7 @@ const ChatOpsConsoleStable = () => {
                                         onClick={() => {
                                             if (!messages.length) return;
                                             if (!window.confirm('Clear all chat history?')) return;
-                                            const welcome = { id: 'welcome', role: 'assistant', authorTag: currentRoom?.ai_config ? JSON.parse(currentRoom.ai_config).assistant_initials || 'TL' : 'TL', text: 'History cleared. Fresh start! Ask me anything.', createdAt: new Date().toISOString() };
+                                            const welcome = { id: 'welcome', role: 'assistant', authorTag: 'TL', text: 'History cleared. Fresh start! Ask me anything.', createdAt: new Date().toISOString() };
                                             setMessages([welcome]);
                                             localStorage.removeItem('theLocal.chatMessages');
                                             setErrors(prev => [{ id: `e-${Date.now()}`, message: 'Chat history cleared' }, ...prev]);
@@ -804,16 +736,95 @@ const ChatOpsConsoleStable = () => {
                                         className="ml-2 px-2 py-1 rounded-lg text-[10px] font-semibold bg-slate-800/70 border border-slate-700 text-slate-300 hover:bg-slate-700/70 active:scale-95"
                                     >Clear</button>
                                 </div>
-                                {/* Error toasts rendered globally */}
                             </div>
+                        </div>
+
+                        {/* Room Members Panel - Desktop & Mobile */}
+                        {showMembersPanel && (
+                            <>
+                                {/* Mobile: Full screen overlay */}
+                                <div className="lg:hidden fixed inset-0 bg-black/55 backdrop-blur-md z-40" onClick={() => setShowMembersPanel(false)} />
+                                <div className="lg:hidden fixed inset-y-0 right-0 w-80 max-w-[90vw] bg-slate-900/95 backdrop-blur-xl border-l border-slate-800/70 shadow-2xl z-50">
+                                    <RoomMembersPanel
+                                        members={members}
+                                        loading={membersLoading}
+                                        error={membersError}
+                                        onClose={() => setShowMembersPanel(false)}
+                                        canManageMembers={canManageMembers}
+                                        roomId={activeRoomId}
+                                    />
+                                </div>
+
+                                {/* Desktop: Side panel */}
+                                <aside className="hidden lg:block lg:w-80 border-l border-slate-800/60 bg-slate-900/40">
+                                    <RoomMembersPanel
+                                        members={members}
+                                        loading={membersLoading}
+                                        error={membersError}
+                                        onClose={() => setShowMembersPanel(false)}
+                                        canManageMembers={canManageMembers}
+                                        roomId={activeRoomId}
+                                    />
+                                </aside>
+                            </>
                         )}
                     </div>
-                </div>
+                ) : (
+                    <div className="chat-scroll-area" ref={messagesContainerRef}>
+                        {activeView === 'dashboard' && <DashboardPanel recentMessages={messages} logs={logs} />}
+                        {activeView === 'connections' && (
+                            <ConnectionsPanel
+                                provider={provider}
+                                setProvider={setProvider}
+                                openaiKey={openaiKey}
+                                setOpenaiKey={setOpenaiKey}
+                                openaiModel={openaiModel}
+                                setOpenaiModel={setOpenaiModel}
+                                ollamaUrl={ollamaUrl}
+                                setOllamaUrl={setOllamaUrl}
+                                ollamaModel={ollamaModel}
+                                setOllamaModel={setOllamaModel}
+                                ollamaModels={ollamaModels}
+                                ollamaModelsLoading={ollamaModelsLoading}
+                                refreshOllamaModels={refreshOllamaModels}
+                                temp={temp}
+                                setTemp={setTemp}
+                                providerMeta={providerMeta}
+                                cloudPath={cloudPath}
+                                setCloudPath={setCloudPath}
+                                cloudEndpoint={cloudEndpoint}
+                                setCloudEndpoint={setCloudEndpoint}
+                                tailnetStats={tailnetStats}
+                                tailnetLoading={tailnetLoading}
+                                tailnetError={tailnetError}
+                                refreshTailnetStats={refreshTailnetStats}
+                                apiBase={API_BASE}
+                            />
+                        )}
+                        {activeView === 'system' && <SystemPanel tailnetStats={tailnetStats} refreshTailnetStats={refreshTailnetStats} exitNodeChanging={tailnetLoading} setExitNodeChanging={setTailnetLoading} currentUser={currentUser} />}
+                        {activeView === 'cloud' && <CloudPanel apiBase={API_BASE} />}
+                        {activeView === 'users' && <UsersView />}
+                        {activeView !== 'chat' && activeView !== 'connections' && activeView !== 'dashboard' && activeView !== 'system' && activeView !== 'cloud' && activeView !== 'users' && <ViewPlaceholder view={activeView} />}
+                    </div>
+                )}
             </main>
             <ErrorToasts
                 errors={errors}
                 dismiss={(id) => setErrors(prev => prev.filter(e => e.id !== id))}
             />
+
+            {/* Phase 6 & 6B: Room Settings Panel */}
+            {activeRoomId && (
+                <RoomSettingsPanel
+                    room={rooms.find(r => r.id === activeRoomId)}
+                    isOpen={showSettingsPanel}
+                    onClose={() => setShowSettingsPanel(false)}
+                    onRoomUpdated={handleRoomUpdated}
+                    onRoomDeleted={handleRoomDeleted}
+                    userRole={currentMembership?.role || 'member'}
+                    userIsGlobalAdmin={isGlobalAdmin}
+                />
+            )}
         </div>
     );
 };

@@ -9,8 +9,9 @@ export function CloudPanel({ apiBase }) {
     const [selectedFile, setSelectedFile] = useState(null);
     const [aiContext, setAiContext] = useState(null);
     const [storageStats, setStorageStats] = useState(null);
-    const [uploadFile, setUploadFile] = useState(null);
     const [uploading, setUploading] = useState(false);
+    const [uploadProgress, setUploadProgress] = useState(null);
+    const fileInputRef = React.useRef(null);
 
     useEffect(() => {
         loadDirectory(currentPath);
@@ -20,29 +21,12 @@ export function CloudPanel({ apiBase }) {
     const loadDirectory = async (path) => {
         setLoading(true);
         try {
-            // Get auth token
-            const tokenCandidates = ['chatops_token', 'auth_token', 'jwt', 'access_token'];
-            let bearer = null;
-            for (const k of tokenCandidates) {
-                const v = localStorage.getItem(k);
-                if (v) {
-                    bearer = v;
-                    break;
-                }
+            const res = await fetch(`${apiBase}/api/storage/local/browse?path=${encodeURIComponent(path)}`);
+            if (!res.ok) {
+                throw new Error(`HTTP ${res.status}: ${await res.text()}`);
             }
-
-            const headers = {};
-            if (bearer) headers['Authorization'] = `Bearer ${bearer}`;
-
-            const response = await fetch(`${apiBase}/api/storage/local/browse?path=${encodeURIComponent(path)}`, { headers });
-            if (response.ok) {
-                const data = await response.json();
-                setFiles(data.files || []);
-            } else {
-                console.error('Failed to load directory:', response.status, response.statusText);
-                // Fallback to empty
-                setFiles([]);
-            }
+            const data = await res.json();
+            setFiles(data.files || []);
         } catch (e) {
             console.error('Error loading directory:', e);
             setFiles([]);
@@ -107,105 +91,74 @@ export function CloudPanel({ apiBase }) {
             setSelectedFile(file);
             // Mock AI context - in production, backend would analyze file content
             setAiContext({
-                summary: `${file.name} (${file.size}). Last modified ${file.modified}. AI relevance: ${file.aiRelevance}.`,
-                tags: [file.type, file.aiRelevance, file.ext || 'unknown'].filter(Boolean),
-                relatedFiles: files.filter(f => f.type === 'file' && f.name !== file.name && f.aiRelevance === file.aiRelevance).slice(0, 2).map(f => f.name)
+                summary: `${file.name} contains ${Math.floor(Math.random() * 500)} lines of content. Last modified ${file.modified}.`,
+                tags: ['document', 'recent', 'user-created'],
+                relatedFiles: ['config.json', 'README.md'].filter(n => n !== file.name).slice(0, 2)
             });
+        }
+    };
+
+    const handleUpload = async (event) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+
+        setUploading(true);
+        setUploadProgress(`Uploading ${file.name}...`);
+
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+
+            const res = await fetch(`${apiBase}/api/storage/local/upload?path=${encodeURIComponent(currentPath)}`, {
+                method: 'POST',
+                body: formData
+            });
+
+            if (!res.ok) {
+                const errorText = await res.text();
+                throw new Error(`Upload failed: ${errorText}`);
+            }
+
+            const result = await res.json();
+            setUploadProgress(`✓ Uploaded ${result.filename} (${result.size})`);
+
+            // Refresh directory to show new file
+            await loadDirectory(currentPath);
+
+            setTimeout(() => setUploadProgress(null), 3000);
+        } catch (e) {
+            console.error('Upload error:', e);
+            setUploadProgress(`✗ Upload failed: ${e.message}`);
+            setTimeout(() => setUploadProgress(null), 5000);
+        } finally {
+            setUploading(false);
+            if (fileInputRef.current) {
+                fileInputRef.current.value = '';
+            }
         }
     };
 
     const handleDownload = async (file) => {
         try {
-            // Get auth token
-            const tokenCandidates = ['chatops_token', 'auth_token', 'jwt', 'access_token'];
-            let bearer = null;
-            for (const k of tokenCandidates) {
-                const v = localStorage.getItem(k);
-                if (v) {
-                    bearer = v;
-                    break;
-                }
+            const res = await fetch(`${apiBase}/api/storage/local/download?file_path=${encodeURIComponent(file.path)}`);
+
+            if (!res.ok) {
+                throw new Error(`Download failed: HTTP ${res.status}`);
             }
 
-            const headers = {};
-            if (bearer) headers['Authorization'] = `Bearer ${bearer}`;
-
-            const response = await fetch(`${apiBase}/api/storage/local/download?file_path=${encodeURIComponent(file.path)}`, { headers });
-            if (response.ok) {
-                const blob = await response.blob();
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = file.name;
-                document.body.appendChild(a);
-                a.click();
-                window.URL.revokeObjectURL(url);
-                document.body.removeChild(a);
-            } else {
-                console.error('Download failed:', response.statusText);
-                alert('Download failed: ' + response.statusText);
-            }
+            // Create a blob from the response and trigger download
+            const blob = await res.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = file.name;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
         } catch (e) {
-            console.error('Error downloading file:', e);
-            alert('Error downloading file: ' + e.message);
-        }
-    };
-
-    const handleUploadClick = () => {
-        const input = document.createElement('input');
-        input.type = 'file';
-        input.onchange = (e) => {
-            const file = e.target.files[0];
-            if (file) {
-                setUploadFile(file);
-                performUpload(file);
-            }
-        };
-        input.click();
-    };
-
-    const performUpload = async (file) => {
-        setUploading(true);
-        try {
-            // Get auth token
-            const tokenCandidates = ['chatops_token', 'auth_token', 'jwt', 'access_token'];
-            let bearer = null;
-            for (const k of tokenCandidates) {
-                const v = localStorage.getItem(k);
-                if (v) {
-                    bearer = v;
-                    break;
-                }
-            }
-
-            const formData = new FormData();
-            formData.append('file', file);
-            formData.append('path', currentPath);
-
-            const headers = {};
-            if (bearer) headers['Authorization'] = `Bearer ${bearer}`;
-
-            const response = await fetch(`${apiBase}/api/storage/local/upload?path=${encodeURIComponent(currentPath)}`, {
-                method: 'POST',
-                headers,
-                body: formData
-            });
-
-            if (response.ok) {
-                const data = await response.json();
-                alert(`Upload successful: ${data.filename} (${data.size})`);
-                // Refresh directory
-                await loadDirectory(currentPath);
-            } else {
-                const error = await response.json();
-                alert('Upload failed: ' + (error.detail || response.statusText));
-            }
-        } catch (e) {
-            console.error('Error uploading file:', e);
-            alert('Error uploading file: ' + e.message);
-        } finally {
-            setUploading(false);
-            setUploadFile(null);
+            console.error('Download error:', e);
+            alert(`Download failed: ${e.message}`);
         }
     };
 
@@ -267,13 +220,19 @@ export function CloudPanel({ apiBase }) {
                                 className="w-full bg-slate-900/80 border border-slate-700 rounded-lg pl-9 pr-3 py-2 text-[12px] focus:outline-none focus:border-violet-500/70"
                             />
                         </div>
+                        <input
+                            ref={fileInputRef}
+                            type="file"
+                            onChange={handleUpload}
+                            className="hidden"
+                        />
                         <button
-                            onClick={handleUploadClick}
+                            onClick={() => fileInputRef.current?.click()}
                             disabled={uploading}
-                            className="px-3 py-2 rounded-lg bg-violet-600/80 hover:bg-violet-600 text-white text-[12px] flex items-center gap-1.5 disabled:opacity-50"
+                            className="px-3 py-2 rounded-lg bg-violet-600/20 border border-violet-600/30 text-violet-400 text-[12px] hover:bg-violet-600/30 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                         >
                             <Upload className="w-3.5 h-3.5" />
-                            {uploading ? 'Uploading...' : 'Upload'}
+                            Upload
                         </button>
                         {currentPath !== 'D:\\' && (
                             <button onClick={navigateUp} className="px-3 py-2 rounded-lg bg-slate-800/70 border border-slate-700 text-slate-300 text-[12px] hover:bg-slate-700/70">
@@ -281,6 +240,11 @@ export function CloudPanel({ apiBase }) {
                             </button>
                         )}
                     </div>
+                    {uploadProgress && (
+                        <div className="text-[11px] text-slate-400 bg-slate-900/60 border border-slate-700 rounded-lg px-3 py-2">
+                            {uploadProgress}
+                        </div>
+                    )}
                 </div>
 
                 {/* File List */}
@@ -303,7 +267,7 @@ export function CloudPanel({ apiBase }) {
                         >
                             <button
                                 onClick={() => handleFileClick(file)}
-                                className="flex-1 flex items-center gap-3 text-left min-w-0"
+                                className="flex items-center gap-3 flex-1 min-w-0 text-left"
                             >
                                 {getFileIcon(file)}
                                 <div className="flex-1 min-w-0">
@@ -321,10 +285,10 @@ export function CloudPanel({ apiBase }) {
                             {file.type === 'file' && (
                                 <button
                                     onClick={() => handleDownload(file)}
-                                    className="p-2 rounded-lg hover:bg-slate-800/70 text-slate-400 hover:text-violet-400 transition-colors"
+                                    className="p-2 rounded-lg hover:bg-slate-800/70 border border-transparent hover:border-slate-700 transition-colors"
                                     title="Download file"
                                 >
-                                    <Download className="w-3.5 h-3.5" />
+                                    <Download className="w-3.5 h-3.5 text-slate-400" />
                                 </button>
                             )}
                         </div>
@@ -373,9 +337,9 @@ export function CloudPanel({ apiBase }) {
             <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
                 <div className="text-[11px] text-slate-500 leading-relaxed space-y-1">
                     <div>💡 <span className="text-slate-400">AI+ badges indicate files with high contextual relevance for AI workflows.</span></div>
-                    <div>🔍 <span className="text-slate-400">Click files to view summaries and related resources.</span></div>
-                    <div>📂 <span className="text-slate-400">Upload files to current directory or download files via D:\ drive access.</span></div>
-                    <div>🔒 <span className="text-slate-400">All operations restricted to D:\ drive with authentication required.</span></div>
+                    <div>� <span className="text-slate-400">Click Upload to add files to the current folder.</span></div>
+                    <div>📥 <span className="text-slate-400">Click the download icon to save files locally.</span></div>
+                    <div>📂 <span className="text-slate-400">Currently browsing local D:\ drive storage.</span></div>
                 </div>
             </div>
         </div>

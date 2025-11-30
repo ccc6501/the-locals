@@ -1,4 +1,8 @@
 # backend/chat_routes.py
+# ⚠️ DEPRECATED: This in-memory chat system is being phased out
+# New persistent rooms/messages use: fastapi-backend/routers/rooms.py
+# Phase 1: Backend now uses Thread and Message models for persistence
+# Phase 2: Frontend will be updated to use /api/rooms endpoints
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -38,7 +42,9 @@ class NewMessage(BaseModel):
 
 # ─────────────────────────────
 # TEMP IN-MEMORY STORAGE
-# (swap this for SQLite later)
+# ⚠️ DEPRECATED - Phase 1 Complete
+# New system uses Thread and Message models (see routers/rooms.py)
+# This remains for backwards compatibility until frontend is updated (Phase 2)
 # ─────────────────────────────
 
 # room_id -> ChatRoom

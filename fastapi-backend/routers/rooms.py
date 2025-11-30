@@ -1,613 +1,656 @@
-"""
-Room management routes for multi-user chat
-"""
+# fastapi-backend/routers/rooms.py
 
-from fastapi import APIRouter, Depends, HTTPException, status, Body
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from sqlalchemy.orm import Session
+from datetime import datetime, timedelta
 from typing import List, Optional
-from datetime import datetime
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 from database import get_db
-from models import User, Room, RoomMember, Message
-from schemas import (
-    RoomResponse, RoomCreate, RoomUpdate,
-    RoomMemberResponse, RoomMemberAdd, RoomMemberUpdate,
-    RoomMessageResponse, RoomMessageCreate
+from models import Thread, Message, User, RoomMember
+from auth.current_user import get_current_user
+from auth.room_permissions import (
+    get_membership,
+    require_membership,
+    can_add_members,
 )
 
 router = APIRouter()
 
-# Optional bearer token for localhost development
-security = HTTPBearer(auto_error=False)
+
+# ---------- Pydantic schemas ----------
+
+class RoomOut(BaseModel):
+    id: int
+    name: str
+    type: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    ai_enabled: Optional[bool] = True  # Phase 6
+    notifications_enabled: Optional[bool] = True  # Phase 6
+    self_destruct_at: Optional[datetime] = None  # Phase 6B
+    total_messages: Optional[int] = 0  # Phase 6B
+    total_ai_requests: Optional[int] = 0  # Phase 6B
+    last_activity_at: Optional[datetime] = None  # Phase 6B
+
+    class Config:
+        from_attributes = True
 
 
-# Helper to get current user or default to first user for localhost
-async def get_user_or_default(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
-    db: Session = Depends(get_db)
-) -> User:
-    """Get current user from token or default to first owner user for localhost development"""
+class MessageOut(BaseModel):
+    id: int
+    thread_id: int
+    user_id: Optional[int] = None
+    sender: str
+    text: str
+    timestamp: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class RoomCreateRequest(BaseModel):
+    name: str
+    type: Optional[str] = "room"
+
+
+class MessageCreateRequest(BaseModel):
+    text: str
+
+
+class RoomMemberOut(BaseModel):
+    """Room member with user information"""
+    user_id: int
+    name: str
+    handle: str
+    role: str
+    joined_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class AddMemberRequest(BaseModel):
+    user_id: int
+
+
+class RoomUpdateRequest(BaseModel):
+    """Phase 6B: Update room name and settings"""
+    name: Optional[str] = None
+    ai_enabled: Optional[bool] = None
+    notifications_enabled: Optional[bool] = None
+    self_destruct_at: Optional[datetime] = None
+
+
+class SelfDestructRequest(BaseModel):
+    """Phase 6B: Set self-destruct timer"""
+    duration: str  # "7d", "30d", "90d", "never"
+
+
+# ---------- Helpers ----------
+
+def get_default_user(db: Session) -> User:
+    user = db.query(User).filter(User.handle == "chance").first()
+    if user:
+        return user
+
+    user = db.query(User).filter(User.id == 1).first()
+    if user:
+        return user
+
+    raise HTTPException(
+        status_code=500,
+        detail="No default user found (handle='chance' or id=1).",
+    )
+
+
+def get_or_create_default_room(db: Session) -> Thread:
+    # Try to find a 'General' room first
+    room = (
+        db.query(Thread)
+        .filter(Thread.name == "General", Thread.type == "room")
+        .first()
+    )
+    if room:
+        return room
+
+    # If any thread exists, just return the most recently updated one
+    room = db.query(Thread).order_by(Thread.updated_at.desc()).first()
+    if room:
+        return room
+
+    # Otherwise create a brand new default room
+    now = datetime.utcnow()
+    room = Thread(
+        name="General",
+        type="room",
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(room)
+    db.commit()
+    db.refresh(room)
+    return room
+
+
+def ensure_membership_for_current_user(db: Session, thread_id: int):
+    """
+    Self-heal membership for legacy rooms.
+    If a room has zero members, add current user as owner.
+    If a room has members but current user is missing, add current user as member.
     
-    # If we have credentials, try to authenticate
-    if credentials:
-        from auth_utils import decode_token
-        try:
-            token = credentials.credentials
-            payload = decode_token(token)
-            email: str = payload.get("sub")
-            if email:
-                user = db.query(User).filter(User.email == email).first()
-                if user:
-                    return user
-        except:
-            pass  # Fall through to default user
+    Phase 6B: Global admins are NOT auto-added to rooms (privacy protection).
+    """
+    thread = db.query(Thread).filter(Thread.id == thread_id).first()
+    if not thread:
+        return
     
-    # For localhost development without auth, use first owner
-    default_user = db.query(User).filter(User.role == "owner").first()
-    if not default_user:
-        default_user = db.query(User).first()
+    # Check how many members exist for this room
+    member_count = db.query(RoomMember).filter(RoomMember.thread_id == thread_id).count()
+    current_user = get_current_user(db)
     
-    if not default_user:
+    # Phase 6B: Do NOT auto-add global admins to rooms (they can manage but not see messages)
+    if current_user.role == "admin":
+        return
+    
+    # Check if current user is already a member
+    existing_membership = get_membership(db, current_user.id, thread_id)
+    
+    if member_count == 0:
+        # Room has no members - claim it as owner
+        now = datetime.utcnow()
+        membership = RoomMember(
+            thread_id=thread_id,
+            user_id=current_user.id,
+            role="owner",
+            created_at=now,
+        )
+        db.add(membership)
+        db.commit()
+    elif existing_membership is None:
+        # Room has members but current user is not one - add as regular member
+        now = datetime.utcnow()
+        membership = RoomMember(
+            thread_id=thread_id,
+            user_id=current_user.id,
+            role="member",
+            created_at=now,
+        )
+        db.add(membership)
+        db.commit()
+
+
+# ---------- Routes ----------
+
+@router.get("/api/rooms", response_model=List[RoomOut])
+def list_rooms(db: Session = Depends(get_db)):
+    """
+    Return rooms where the current user is a member.
+    Phase 6B: All users (including admins) only see rooms they're members of in main chat UI.
+    Self-heals membership for legacy rooms with no members.
+    """
+    current_user = get_current_user(db)
+    
+    # Ensure at least one room exists
+    get_or_create_default_room(db)
+    
+    # Get all rooms to check for orphaned ones
+    all_rooms = db.query(Thread).all()
+    
+    # Self-heal: ensure membership for rooms with zero members
+    # Skip for admins to prevent auto-joining all orphaned rooms
+    if current_user.role != "admin":
+        for room in all_rooms:
+            member_count = db.query(RoomMember).filter(RoomMember.thread_id == room.id).count()
+            if member_count == 0:
+                ensure_membership_for_current_user(db, room.id)
+    
+    # Return only rooms where current user is a member
+    user_room_ids = (
+        db.query(RoomMember.thread_id)
+        .filter(RoomMember.user_id == current_user.id)
+        .all()
+    )
+    room_ids = [r[0] for r in user_room_ids]
+    
+    rooms = (
+        db.query(Thread)
+        .filter(Thread.id.in_(room_ids))
+        .order_by(Thread.updated_at.desc())
+        .all()
+    )
+    return rooms
+
+
+@router.get("/api/admin/rooms/all", response_model=List[RoomOut])
+def list_all_rooms_admin(db: Session = Depends(get_db)):
+    """
+    Phase 6B: Admin-only endpoint to list ALL rooms for management.
+    Returns all rooms regardless of membership for lifecycle management.
+    Does NOT grant message access - only for settings/metrics/cleanup.
+    """
+    current_user = get_current_user(db)
+    
+    # Require global admin role
+    if current_user.role != "admin":
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="No users found - run quick_setup.py to initialize database"
+            status_code=403,
+            detail="Only global administrators can access all rooms"
         )
     
-    return default_user
-
-
-# ========================================
-# Room Management
-# ========================================
-
-@router.get("", response_model=List[RoomResponse])
-async def list_rooms(
-    current_user: User = Depends(get_user_or_default),
-    db: Session = Depends(get_db)
-):
-    """List all rooms the current user has access to"""
-    
-    # Get room IDs user is a member of
-    memberships = db.query(RoomMember).filter(RoomMember.user_id == current_user.id).all()
-    room_ids = [m.room_id for m in memberships]
-    
-    # Get rooms
-    rooms = db.query(Room).filter(Room.id.in_(room_ids)).all()
-    
-    return rooms
-
-
-@router.get("/system", response_model=List[RoomResponse])
-async def list_system_rooms(
-    current_user: User = Depends(get_user_or_default),
-    db: Session = Depends(get_db)
-):
-    """List all system rooms"""
-    
-    rooms = db.query(Room).filter(Room.is_system == True).all()
-    
-    return rooms
-
-
-@router.post("", response_model=RoomResponse)
-async def create_room(
-    room_data: RoomCreate,
-    current_user: User = Depends(get_user_or_default),
-    db: Session = Depends(get_db)
-):
-    """Create a new room"""
-    
-    # Check if user has permission to create rooms
-    from models import UserPermission
-    if current_user.role not in ["owner", "admin"]:
-        has_permission = db.query(UserPermission).filter(
-            UserPermission.user_id == current_user.id,
-            UserPermission.permission == "manage_rooms"
-        ).first()
-        
-        if not has_permission:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized to create rooms"
-            )
-    
-    # Generate slug from name if not provided
-    import re
-    if room_data.slug:
-        slug = room_data.slug
-    else:
-        slug = re.sub(r'[^a-z0-9-]', '', room_data.name.lower().replace(' ', '-'))
-    
-    # Ensure slug is unique
-    existing = db.query(Room).filter(Room.slug == slug).first()
-    if existing:
-        counter = 1
-        while db.query(Room).filter(Room.slug == f"{slug}-{counter}").first():
-            counter += 1
-        slug = f"{slug}-{counter}"
-    
-    # Create room
-    import json
-    new_room = Room(
-        slug=slug,
-        name=room_data.name,
-        type=room_data.type,
-        icon=room_data.icon,
-        color=room_data.color or "#6B7280",
-        created_by=current_user.id,
-        is_system=False,
-        ai_config=json.dumps(room_data.ai_config.dict()) if room_data.ai_config else "{}"
+    # Return all rooms sorted by last updated
+    rooms = (
+        db.query(Thread)
+        .order_by(Thread.updated_at.desc())
+        .all()
     )
-    
-    db.add(new_room)
+    return rooms
+
+
+@router.post("/api/rooms", response_model=RoomOut)
+def create_room(payload: RoomCreateRequest, db: Session = Depends(get_db)):
+    """
+    Create a new room (Thread) with the given name and optional type.
+    Automatically adds the current user as owner.
+    """
+    name = (payload.name or "").strip()
+    room_type = (payload.type or "room").strip()
+
+    if not name:
+        raise HTTPException(status_code=400, detail="Room name is required.")
+
+    # Optional: prevent exact duplicates
+    existing = (
+        db.query(Thread)
+        .filter(Thread.name == name, Thread.type == room_type)
+        .first()
+    )
+    if existing:
+        return existing
+
+    now = datetime.utcnow()
+    room = Thread(
+        name=name,
+        type=room_type,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(room)
     db.commit()
-    db.refresh(new_room)
+    db.refresh(room)
     
-    # Add creator as owner
+    # Auto-create membership for the current user as owner
+    current_user = get_current_user(db)
     membership = RoomMember(
-        room_id=new_room.id,
+        thread_id=room.id,
         user_id=current_user.id,
-        role="owner"
+        role="owner",
+        created_at=now,
     )
     db.add(membership)
     db.commit()
     
-    return new_room
-
-
-@router.get("/{room_id}", response_model=RoomResponse)
-async def get_room(
-    room_id: int,
-    current_user: User = Depends(get_user_or_default),
-    db: Session = Depends(get_db)
-):
-    """Get room details"""
-    
-    # Check if user has access to this room
-    membership = db.query(RoomMember).filter(
-        RoomMember.room_id == room_id,
-        RoomMember.user_id == current_user.id
-    ).first()
-    
-    if not membership and current_user.role not in ["owner", "admin"]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to access this room"
-        )
-    
-    room = db.query(Room).filter(Room.id == room_id).first()
-    if not room:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Room not found"
-        )
-    
     return room
 
 
-@router.patch("/{room_id}", response_model=RoomResponse)
-async def update_room(
+@router.get(
+    "/api/rooms/{room_id}/messages",
+    response_model=List[MessageOut],
+)
+def get_room_messages(
     room_id: int,
-    room_data: RoomUpdate,
-    current_user: User = Depends(get_user_or_default),
-    db: Session = Depends(get_db)
+    limit: int = 50,
+    before: Optional[int] = None,
+    db: Session = Depends(get_db),
 ):
-    """Update room details (owner/admin only)"""
+    """
+    Return messages for a room ordered oldest->newest.
+    Supports simple 'before id' pagination.
+    Requires membership in the room.
+    """
+    # Self-heal membership if needed
+    ensure_membership_for_current_user(db, room_id)
     
-    room = db.query(Room).filter(Room.id == room_id).first()
+    # Require membership to view messages
+    current_user = get_current_user(db)
+    require_membership(db, current_user, room_id)
+    
+    query = db.query(Message).filter(Message.thread_id == room_id)
+
+    if before is not None:
+        query = query.filter(Message.id < before)
+
+    messages = (
+        query.order_by(Message.timestamp.asc())
+        .limit(min(max(limit, 1), 100))
+        .all()
+    )
+    return messages
+
+
+@router.post(
+    "/api/rooms/{room_id}/messages",
+    response_model=MessageOut,
+)
+def create_room_message(
+    room_id: int,
+    payload: MessageCreateRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Create a new *user* message in the given room.
+    Requires membership in the room.
+    """
+    # Self-heal membership if needed
+    ensure_membership_for_current_user(db, room_id)
+    
+    # Require membership to send messages
+    current_user = get_current_user(db)
+    require_membership(db, current_user, room_id)
+    
+    text = (payload.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Message text is required.")
+
+    user = get_default_user(db)
+
+    now = datetime.utcnow()
+    message = Message(
+        thread_id=room_id,
+        user_id=user.id,
+        sender="CC",  # Chance / current user tag
+        text=text,
+        timestamp=now,
+    )
+    db.add(message)
+
+    # Phase 6B: Update room metrics and activity
+    thread = db.query(Thread).filter(Thread.id == room_id).first()
+    if thread:
+        thread.updated_at = now
+        thread.last_activity_at = now
+        thread.total_messages = (thread.total_messages or 0) + 1
+
+    db.commit()
+    db.refresh(message)
+    return message
+
+
+@router.get("/api/rooms/{room_id}/members", response_model=List[RoomMemberOut])
+def get_room_members(room_id: int, db: Session = Depends(get_db)):
+    """
+    Get all members of a room with their user information.
+    Requires membership in the room (or global admin).
+    Phase 6B: Global admins can view members without being added to room.
+    """
+    current_user = get_current_user(db)
+    is_global_admin = current_user.role == "admin"
+    
+    # Only self-heal membership for non-admins
+    if not is_global_admin:
+        ensure_membership_for_current_user(db, room_id)
+        require_membership(db, current_user, room_id)
+    
+    # Verify room exists
+    room = db.query(Thread).filter(Thread.id == room_id).first()
     if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+    
+    # Get all memberships for this room
+    memberships = (
+        db.query(RoomMember)
+        .filter(RoomMember.thread_id == room_id)
+        .all()
+    )
+    
+    # Build response with user info
+    result = []
+    for membership in memberships:
+        user = db.query(User).filter(User.id == membership.user_id).first()
+        if user:
+            result.append({
+                "user_id": user.id,
+                "name": user.name,
+                "handle": user.handle,
+                "role": membership.role,
+                "joined_at": membership.created_at,
+            })
+    
+    return result
+
+
+@router.post("/api/rooms/{room_id}/members", response_model=RoomMemberOut)
+def add_room_member(room_id: int, payload: AddMemberRequest, db: Session = Depends(get_db)):
+    """
+    Add a user to a room as a member.
+    Requires owner or admin role to add members.
+    """
+    user_id = payload.user_id
+    
+    # Get current user and verify they're a member
+    current_user = get_current_user(db)
+    membership = get_membership(db, current_user.id, room_id)
+    
+    if membership is None:
+        raise HTTPException(status_code=403, detail="Not a member of this room")
+    
+    # Only owners and admins can add members
+    if not can_add_members(membership):
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Room not found"
+            status_code=403,
+            detail="Only owners/admins can add members to this room"
         )
     
-    # Check if user is room owner or admin
-    membership = db.query(RoomMember).filter(
-        RoomMember.room_id == room_id,
-        RoomMember.user_id == current_user.id
-    ).first()
+    # Verify room exists
+    room = db.query(Thread).filter(Thread.id == room_id).first()
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
     
-    if (not membership or membership.role not in ["owner", "admin"]) and current_user.role not in ["owner", "admin"]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to modify this room"
-        )
+    # Verify user exists
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
     
-    # Update fields
-    if room_data.name is not None:
-        room.name = room_data.name
+    # Check if already a member
+    existing = (
+        db.query(RoomMember)
+        .filter(RoomMember.thread_id == room_id, RoomMember.user_id == user_id)
+        .first()
+    )
+    if existing:
+        # Return existing membership info
+        return {
+            "user_id": user.id,
+            "name": user.name,
+            "handle": user.handle,
+            "role": existing.role,
+            "joined_at": existing.created_at,
+        }
     
-    if room_data.icon is not None:
-        room.icon = room_data.icon
+    # Create new membership with default role "member"
+    now = datetime.utcnow()
+    new_membership = RoomMember(
+        thread_id=room_id,
+        user_id=user_id,
+        role="member",  # Default role
+        created_at=now,
+    )
+    db.add(new_membership)
+    db.commit()
+    db.refresh(new_membership)
     
-    if room_data.color is not None:
-        room.color = room_data.color
+    return {
+        "user_id": user.id,
+        "name": user.name,
+        "handle": user.handle,
+        "role": new_membership.role,
+        "joined_at": new_membership.created_at,
+    }
+
+
+# ========== PHASE 6 & 6B: ROOM SETTINGS & ADVANCED MANAGEMENT ==========
+
+@router.patch("/api/rooms/{room_id}", response_model=RoomOut)
+def update_room(
+    room_id: int,
+    request: RoomUpdateRequest,
+    db: Session = Depends(get_db),
+):
+    """Phase 6B: Update room name and settings (owner/room admin/global admin)"""
+    current_user = get_current_user(db)
     
-    if room_data.ai_config is not None:
-        import json
-        room.ai_config = json.dumps(room_data.ai_config.dict())
+    # Get room
+    room = db.query(Thread).filter(Thread.id == room_id).first()
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
     
+    # Check permissions: global admin OR room owner/admin
+    is_global_admin = current_user.role == "admin"
+    membership = get_membership(db, current_user.id, room_id)
+    is_room_admin = membership and membership.role in ["owner", "admin"]
+    
+    if not is_global_admin and not is_room_admin:
+        raise HTTPException(status_code=403, detail="Only global admins or room owners/admins can update room settings")
+    
+    # Update fields if provided
+    now = datetime.utcnow()
+    if request.name is not None and request.name.strip():
+        room.name = request.name.strip()
+    if request.ai_enabled is not None:
+        room.ai_enabled = request.ai_enabled
+    if request.notifications_enabled is not None:
+        room.notifications_enabled = request.notifications_enabled
+    if request.self_destruct_at is not None:
+        room.self_destruct_at = request.self_destruct_at
+    
+    room.updated_at = now
     db.commit()
     db.refresh(room)
     
     return room
 
 
-@router.delete("/{room_id}")
-async def delete_room(
+@router.post("/api/rooms/{room_id}/self-destruct")
+def set_self_destruct(
     room_id: int,
-    current_user: User = Depends(get_user_or_default),
-    db: Session = Depends(get_db)
+    request: SelfDestructRequest,
+    db: Session = Depends(get_db),
 ):
-    """Delete a room (owner only)"""
+    """Phase 6B: Set self-destruct timer (room owner/admin OR global admin)"""
+    current_user = get_current_user(db)
     
-    room = db.query(Room).filter(Room.id == room_id).first()
+    # Get room
+    room = db.query(Thread).filter(Thread.id == room_id).first()
     if not room:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Room not found"
-        )
+        raise HTTPException(status_code=404, detail="Room not found")
     
-    # Cannot delete system rooms
-    if room.is_system:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Cannot delete system rooms"
-        )
+    # Check permissions: global admin OR room owner/admin
+    is_global_admin = current_user.role == "admin"
+    membership = get_membership(db, current_user.id, room_id)
+    is_room_admin = membership and membership.role in ["owner", "admin"]
     
-    # Check if user is room owner or global owner
-    membership = db.query(RoomMember).filter(
-        RoomMember.room_id == room_id,
-        RoomMember.user_id == current_user.id
-    ).first()
+    if not is_global_admin and not is_room_admin:
+        raise HTTPException(status_code=403, detail="Only global admins or room owners/admins can set self-destruct timer")
     
-    if (not membership or membership.role != "owner") and current_user.role != "owner":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to delete this room"
-        )
+    # Calculate expiration based on duration
+    now = datetime.utcnow()
+    if request.duration == "never":
+        room.self_destruct_at = None
+    elif request.duration == "7d":
+        room.self_destruct_at = now + timedelta(days=7)
+    elif request.duration == "30d":
+        room.self_destruct_at = now + timedelta(days=30)
+    elif request.duration == "90d":
+        room.self_destruct_at = now + timedelta(days=90)
+    else:
+        raise HTTPException(status_code=400, detail="Invalid duration. Use '7d', '30d', '90d', or 'never'")
     
-    # Delete room (cascade will handle members and messages)
+    room.updated_at = now
+    db.commit()
+    db.refresh(room)
+    
+    return {
+        "success": True,
+        "self_destruct_at": room.self_destruct_at,
+        "duration": request.duration,
+    }
+
+
+@router.get("/api/rooms/{room_id}/metrics")
+def get_room_metrics(
+    room_id: int,
+    db: Session = Depends(get_db),
+):
+    """Phase 6B: Get room metrics (permission-aware)"""
+    current_user = get_current_user(db)
+    
+    # Get room
+    room = db.query(Thread).filter(Thread.id == room_id).first()
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+    
+    # Check membership
+    membership = get_membership(db, current_user.id, room_id)
+    if not membership:
+        raise HTTPException(status_code=403, detail="Not a member of this room")
+    
+    # Get member count
+    member_count = db.query(RoomMember).filter(RoomMember.thread_id == room_id).count()
+    
+    # Calculate time until self-destruct
+    time_remaining = None
+    if room.self_destruct_at:
+        delta = room.self_destruct_at - datetime.utcnow()
+        if delta.total_seconds() > 0:
+            days = delta.days
+            hours = delta.seconds // 3600
+            minutes = (delta.seconds % 3600) // 60
+            time_remaining = {
+                "days": days,
+                "hours": hours,
+                "minutes": minutes,
+                "total_seconds": int(delta.total_seconds()),
+            }
+    
+    return {
+        "room_id": room.id,
+        "room_name": room.name,
+        "created_at": room.created_at,
+        "total_messages": room.total_messages,
+        "total_ai_requests": room.total_ai_requests,
+        "member_count": member_count,
+        "last_activity_at": room.last_activity_at,
+        "self_destruct_at": room.self_destruct_at,
+        "time_remaining": time_remaining,
+        "ai_enabled": room.ai_enabled,
+        "notifications_enabled": room.notifications_enabled,
+    }
+
+
+@router.delete("/api/rooms/{room_id}")
+def delete_room(
+    room_id: int,
+    db: Session = Depends(get_db),
+):
+    """Phase 6B: Delete room (room owner OR global admin)"""
+    current_user = get_current_user(db)
+    
+    # Get room
+    room = db.query(Thread).filter(Thread.id == room_id).first()
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+    
+    # Check permissions: global admin OR room owner
+    is_global_admin = current_user.role == "admin"
+    membership = get_membership(db, current_user.id, room_id)
+    is_owner = membership and membership.role == "owner"
+    
+    if not is_global_admin and not is_owner:
+        raise HTTPException(status_code=403, detail="Only global admins or room owner can delete the room")
+    
+    # Delete room (CASCADE will handle messages and memberships)
     db.delete(room)
     db.commit()
     
-    return {"message": "Room deleted successfully"}
-
-
-# ========================================
-# Room Membership
-# ========================================
-
-@router.get("/{room_id}/members", response_model=List[RoomMemberResponse])
-async def list_room_members(
-    room_id: int,
-    current_user: User = Depends(get_user_or_default),
-    db: Session = Depends(get_db)
-):
-    """List all members in a room"""
-    
-    # Check if user has access to this room
-    membership = db.query(RoomMember).filter(
-        RoomMember.room_id == room_id,
-        RoomMember.user_id == current_user.id
-    ).first()
-    
-    if not membership and current_user.role not in ["owner", "admin"]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to access this room"
-        )
-    
-    members = db.query(RoomMember).filter(RoomMember.room_id == room_id).all()
-    
-    return members
-
-
-@router.post("/{room_id}/members", response_model=RoomMemberResponse)
-async def add_room_member(
-    room_id: int,
-    member_data: RoomMemberAdd,
-    current_user: User = Depends(get_user_or_default),
-    db: Session = Depends(get_db)
-):
-    """Add a user to a room"""
-    
-    room = db.query(Room).filter(Room.id == room_id).first()
-    if not room:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Room not found"
-        )
-    
-    # Check if current user can add members (owner/admin of room or global admin)
-    current_membership = db.query(RoomMember).filter(
-        RoomMember.room_id == room_id,
-        RoomMember.user_id == current_user.id
-    ).first()
-    
-    if (not current_membership or current_membership.role not in ["owner", "admin"]) and current_user.role not in ["owner", "admin"]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to add members to this room"
-        )
-    
-    # Check if user to add exists
-    user = db.query(User).filter(User.id == member_data.user_id).first()
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
-    
-    # Check if already a member
-    existing = db.query(RoomMember).filter(
-        RoomMember.room_id == room_id,
-        RoomMember.user_id == member_data.user_id
-    ).first()
-    
-    if existing:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="User is already a member of this room"
-        )
-    
-    # Add member
-    new_member = RoomMember(
-        room_id=room_id,
-        user_id=member_data.user_id,
-        role=member_data.role or "member"
-    )
-    
-    db.add(new_member)
-    db.commit()
-    db.refresh(new_member)
-    
-    return new_member
-
-
-@router.patch("/{room_id}/members/{user_id}", response_model=RoomMemberResponse)
-async def update_room_member(
-    room_id: int,
-    user_id: int,
-    member_data: RoomMemberUpdate,
-    current_user: User = Depends(get_user_or_default),
-    db: Session = Depends(get_db)
-):
-    """Update a member's role in a room"""
-    
-    # Check if current user can modify members (owner of room or global owner)
-    current_membership = db.query(RoomMember).filter(
-        RoomMember.room_id == room_id,
-        RoomMember.user_id == current_user.id
-    ).first()
-    
-    if (not current_membership or current_membership.role != "owner") and current_user.role != "owner":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to modify members in this room"
-        )
-    
-    # Get member
-    member = db.query(RoomMember).filter(
-        RoomMember.room_id == room_id,
-        RoomMember.user_id == user_id
-    ).first()
-    
-    if not member:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Member not found"
-        )
-    
-    # Update role
-    if member_data.role is not None:
-        member.role = member_data.role
-    
-    # Update last_read_at
-    if member_data.last_read_at is not None:
-        member.last_read_at = member_data.last_read_at
-    
-    db.commit()
-    db.refresh(member)
-    
-    return member
-
-
-@router.delete("/{room_id}/members/{user_id}")
-async def remove_room_member(
-    room_id: int,
-    user_id: int,
-    current_user: User = Depends(get_user_or_default),
-    db: Session = Depends(get_db)
-):
-    """Remove a user from a room"""
-    
-    # Check if current user can remove members (owner/admin of room or global admin or self)
-    current_membership = db.query(RoomMember).filter(
-        RoomMember.room_id == room_id,
-        RoomMember.user_id == current_user.id
-    ).first()
-    
-    is_self = current_user.id == user_id
-    is_room_admin = current_membership and current_membership.role in ["owner", "admin"]
-    is_global_admin = current_user.role in ["owner", "admin"]
-    
-    if not (is_self or is_room_admin or is_global_admin):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to remove members from this room"
-        )
-    
-    # Get member
-    member = db.query(RoomMember).filter(
-        RoomMember.room_id == room_id,
-        RoomMember.user_id == user_id
-    ).first()
-    
-    if not member:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Member not found"
-        )
-    
-    # Cannot remove last owner
-    if member.role == "owner":
-        owner_count = db.query(RoomMember).filter(
-            RoomMember.room_id == room_id,
-            RoomMember.role == "owner"
-        ).count()
-        
-        if owner_count <= 1:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Cannot remove the last owner of a room"
-            )
-    
-    db.delete(member)
-    db.commit()
-    
-    return {"message": "Member removed successfully"}
-
-
-# ========================================
-# Room Messages
-# ========================================
-
-@router.get("/{room_id}/messages", response_model=List[RoomMessageResponse])
-async def get_room_messages(
-    room_id: int,
-    limit: int = 50,
-    before: Optional[int] = None,
-    current_user: User = Depends(get_user_or_default),
-    db: Session = Depends(get_db)
-):
-    """Get messages in a room with pagination"""
-    
-    # Check if user has access to this room
-    membership = db.query(RoomMember).filter(
-        RoomMember.room_id == room_id,
-        RoomMember.user_id == current_user.id
-    ).first()
-    
-    if not membership and current_user.role not in ["owner", "admin"]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to access this room"
-        )
-    
-    # Build query
-    query = db.query(Message).filter(Message.room_id == room_id)
-    
-    if before:
-        query = query.filter(Message.id < before)
-    
-    messages = query.order_by(Message.created_at.desc()).limit(limit).all()
-    
-    # Reverse to show oldest first
-    messages.reverse()
-    
-    return messages
-
-
-@router.post("/{room_id}/messages", response_model=RoomMessageResponse)
-async def send_room_message(
-    room_id: int,
-    message_data: RoomMessageCreate,
-    current_user: User = Depends(get_user_or_default),
-    db: Session = Depends(get_db)
-):
-    """Send a message to a room"""
-    
-    # Check if user has access to this room
-    membership = db.query(RoomMember).filter(
-        RoomMember.room_id == room_id,
-        RoomMember.user_id == current_user.id
-    ).first()
-    
-    if not membership:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to send messages to this room"
-        )
-    
-    # Create message
-    import json
-    new_message = Message(
-        room_id=room_id,
-        user_id=current_user.id,
-        sender=current_user.handle or current_user.display_name or f"User {current_user.id}",
-        text=message_data.content,
-        role="user",  # Default to user role
-        msg_metadata=json.dumps(message_data.metadata) if message_data.metadata else None
-    )
-    
-    db.add(new_message)
-    db.commit()
-    db.refresh(new_message)
-    
-    return new_message
-
-
-@router.patch("/{room_id}/read")
-async def mark_room_as_read(
-    room_id: int,
-    current_user: User = Depends(get_user_or_default),
-    db: Session = Depends(get_db)
-):
-    """Mark all messages in a room as read"""
-    
-    # Get membership
-    membership = db.query(RoomMember).filter(
-        RoomMember.room_id == room_id,
-        RoomMember.user_id == current_user.id
-    ).first()
-    
-    if not membership:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to access this room"
-        )
-    
-    # Update last_read_at to now
-    membership.last_read_at = datetime.utcnow()
-    db.commit()
-    
-    return {"message": "Room marked as read"}
-
-
-@router.get("/{room_id}/unread-count")
-async def get_unread_count(
-    room_id: int,
-    current_user: User = Depends(get_user_or_default),
-    db: Session = Depends(get_db)
-):
-    """Get count of unread messages in a room"""
-    
-    # Get membership
-    membership = db.query(RoomMember).filter(
-        RoomMember.room_id == room_id,
-        RoomMember.user_id == current_user.id
-    ).first()
-    
-    if not membership:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to access this room"
-        )
-    
-    # Count messages since last_read_at
-    if membership.last_read_at:
-        unread_count = db.query(Message).filter(
-            Message.room_id == room_id,
-            Message.created_at > membership.last_read_at,
-            Message.user_id != current_user.id  # Don't count own messages
-        ).count()
-    else:
-        # Never read, count all messages
-        unread_count = db.query(Message).filter(
-            Message.room_id == room_id,
-            Message.user_id != current_user.id
-        ).count()
-    
-    return {"unread_count": unread_count}
+    return {"success": True, "message": f"Room '{room.name}' deleted successfully"}

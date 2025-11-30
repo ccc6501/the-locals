@@ -54,6 +54,7 @@ app.include_router(invites.router, prefix="/api/invites", tags=["Invites"])
 app.include_router(rooms.router, prefix="/api/rooms", tags=["Rooms"])
 app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
 app.include_router(chat_router)  # Group chat routes at /chat
+app.include_router(rooms.router, tags=["Rooms"])  # Persistent rooms/messages (Phase 1)
 app.include_router(connections.router, prefix="/api/connections", tags=["Connections"])
 app.include_router(storage.router, prefix="/api/storage", tags=["Cloud Storage"])
 app.include_router(settings.router, prefix="/api/settings", tags=["Settings"])

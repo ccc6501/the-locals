@@ -5,6 +5,12 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
-    host: '0.0.0.0' // Listen on all network interfaces (Tailscale, local network)
+    host: '0.0.0.0', // Listen on all network interfaces (Tailscale, local network)
+    proxy: {
+      '/api': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+    },
   }
 });

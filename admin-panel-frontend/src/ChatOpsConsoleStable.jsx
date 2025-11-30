@@ -521,8 +521,8 @@ const ChatOpsConsoleStable = () => {
                             ))}
 
                             {/* Rooms section - only visible on mobile */}
-                            <div className="mt-6 pt-4 border-t border-slate-800/60 lg:hidden">
-                                <div className="flex items-center justify-between mb-3 px-2">
+                            <div className="mt-6 pt-4 border-t border-slate-800/60 lg:hidden flex flex-col min-h-0">
+                                <div className="flex items-center justify-between mb-3 px-2 flex-none">
                                     <div className="text-xs tracking-[0.2em] uppercase text-slate-500">
                                         Rooms
                                     </div>
@@ -547,29 +547,31 @@ const ChatOpsConsoleStable = () => {
                                         New
                                     </button>
                                 </div>
-                                {rooms.length === 0 && (
-                                    <div className="text-xs text-slate-400 px-2 py-2">No rooms yet.</div>
-                                )}
-                                {rooms.map((room) => (
-                                    <button
-                                        key={room.id}
-                                        className={
-                                            "w-full text-left text-sm px-3 py-2.5 rounded-lg mb-1 transition-all flex items-center gap-2 " +
-                                            (room.id === activeRoomId
-                                                ? "bg-slate-800 text-slate-50 border border-purple-500/60"
-                                                : "bg-transparent text-slate-300 hover:bg-slate-800/50")
-                                        }
-                                        onClick={() => {
-                                            setActiveRoomId(room.id);
-                                            setActiveView('chat'); // Switch to chat view
-                                            setMobileMenuOpen(false); // Close drawer
-                                        }}
-                                    >
-                                        <MessageSquare className="w-4 h-4 text-slate-400" />
-                                        <span className="flex-1 truncate">{room.name || `Room ${room.id}`}</span>
-                                        <span className="text-[10px] text-slate-500 uppercase">{room.id}</span>
-                                    </button>
-                                ))}
+                                <div className="overflow-y-auto flex-1 min-h-0">
+                                    {rooms.length === 0 && (
+                                        <div className="text-xs text-slate-400 px-2 py-2">No rooms yet.</div>
+                                    )}
+                                    {rooms.map((room) => (
+                                        <button
+                                            key={room.id}
+                                            className={
+                                                "w-full text-left text-sm px-3 py-2.5 rounded-lg mb-1 transition-all flex items-center gap-2 " +
+                                                (room.id === activeRoomId
+                                                    ? "bg-slate-800 text-slate-50 border border-purple-500/60"
+                                                    : "bg-transparent text-slate-300 hover:bg-slate-800/50")
+                                            }
+                                            onClick={() => {
+                                                setActiveRoomId(room.id);
+                                                setActiveView('chat'); // Switch to chat view
+                                                setMobileMenuOpen(false); // Close drawer
+                                            }}
+                                        >
+                                            <MessageSquare className="w-4 h-4 text-slate-400" />
+                                            <span className="flex-1 truncate">{room.name || `Room ${room.id}`}</span>
+                                            <span className="text-[10px] text-slate-500 uppercase">{room.id}</span>
+                                        </button>
+                                    ))}
+                                </div>
                             </div>
                         </nav>
                     </div>
@@ -608,8 +610,8 @@ const ChatOpsConsoleStable = () => {
                                 <button
                                     onClick={() => setShowMembersPanel(!showMembersPanel)}
                                     className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all ${showMembersPanel
-                                            ? 'bg-violet-500/20 text-violet-300 border border-violet-500/30'
-                                            : 'bg-slate-800/60 text-slate-400 border border-slate-700/60 hover:bg-slate-700/60 hover:text-slate-300'
+                                        ? 'bg-violet-500/20 text-violet-300 border border-violet-500/30'
+                                        : 'bg-slate-800/60 text-slate-400 border border-slate-700/60 hover:bg-slate-700/60 hover:text-slate-300'
                                         }`}
                                     aria-label="Room info"
                                 >

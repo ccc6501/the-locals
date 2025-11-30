@@ -27,17 +27,26 @@ async def get_me(request: Request, db: Session = Depends(get_db)):
     Get current user information via Tailscale IP detection.
     Falls back to default @chance if no Tailscale user found.
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    
     # Get client IP from request
     client_ip = get_client_ip(request)
+    logger.info(f"GET /me - Client IP: {client_ip}")
     
     # Try to find user by Tailscale IP
     current_user = get_user_by_tailscale_ip(db, client_ip)
     
-    # Fallback to default user if no Tailscale match
-    if not current_user:
+    if current_user:
+        logger.info(f"GET /me - Found user by IP: {current_user.handle} (ID={current_user.id})")
+    else:
+        logger.warning(f"GET /me - No Tailscale user found for IP {client_ip}, using fallback")
+        # Fallback to default user if no Tailscale match
         current_user = get_current_user(db)
+        logger.info(f"GET /me - Fallback user: {current_user.handle} (ID={current_user.id})")
     
     return current_user
+
 
 
 @router.get("/admin/summary")

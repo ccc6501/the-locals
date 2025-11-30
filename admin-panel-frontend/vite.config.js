@@ -9,7 +9,14 @@ export default defineConfig({
     proxy: {
       '/api': {
         target: 'http://localhost:8000',
-        changeOrigin: true,
+        changeOrigin: false, // Preserve client IP
+        configure: (proxy, options) => {
+          // Forward the original client IP in X-Forwarded-For header
+          proxy.on('proxyReq', (proxyReq, req, res) => {
+            const clientIp = req.socket.remoteAddress;
+            proxyReq.setHeader('X-Forwarded-For', clientIp);
+          });
+        },
       },
     },
   }

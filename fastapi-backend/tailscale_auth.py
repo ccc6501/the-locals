@@ -18,23 +18,30 @@ def get_client_ip(request: Request) -> str:
     # Check Tailscale-specific headers first
     tailscale_ip = request.headers.get("Tailscale-User-Login")
     if tailscale_ip:
+        logger.info(f"IP from Tailscale-User-Login header: {tailscale_ip}")
         return tailscale_ip
     
     # Check X-Forwarded-For (proxy/reverse proxy)
     forwarded_for = request.headers.get("X-Forwarded-For")
     if forwarded_for:
         # Take the first IP in the chain
-        return forwarded_for.split(",")[0].strip()
+        ip = forwarded_for.split(",")[0].strip()
+        logger.info(f"IP from X-Forwarded-For header: {ip}")
+        return ip
     
     # Check X-Real-IP (nginx proxy)
     real_ip = request.headers.get("X-Real-IP")
     if real_ip:
+        logger.info(f"IP from X-Real-IP header: {real_ip}")
         return real_ip
     
     # Fallback to direct client IP
     if request.client:
-        return request.client.host
+        client_ip = request.client.host
+        logger.info(f"IP from request.client.host: {client_ip}")
+        return client_ip
     
+    logger.warning("Could not determine client IP - returning 'unknown'")
     return "unknown"
 
 

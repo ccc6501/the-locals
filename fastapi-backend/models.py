@@ -74,6 +74,16 @@ class Thread(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Phase 6: Room settings
+    ai_enabled = Column(Boolean, default=True)  # Allow AI responses in this room
+    notifications_enabled = Column(Boolean, default=True)  # Enable notifications for room activity
+    
+    # Phase 6B: Advanced room management
+    self_destruct_at = Column(DateTime, nullable=True)  # When to auto-delete this room
+    total_messages = Column(Integer, default=0)  # Total message count
+    total_ai_requests = Column(Integer, default=0)  # Total AI requests in this room
+    last_activity_at = Column(DateTime, default=datetime.utcnow)  # Last message timestamp
 
     # Relationships
     user = relationship("User", back_populates="threads")

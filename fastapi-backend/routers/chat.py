@@ -148,6 +148,21 @@ async def simple_chat(request: SimpleChatRequest, db: Session = Depends(get_db))
     Returns exactly one assistant response per request.
     """
     
+    # Phase 6: Check if AI is enabled for this room
+    if request.thread_id:
+        thread = db.query(Thread).filter(Thread.id == request.thread_id).first()
+        if thread and not thread.ai_enabled:
+            # Return a polite message instead of an AI response
+            return SimpleChatResponse(
+                role="assistant",
+                text="AI responses are disabled for this room. Enable them in room settings to chat with The Local.",
+                provider="disabled",
+                model="none",
+                temperature=request.temperature,
+                authorTag="TL",
+                createdAt=datetime.utcnow().isoformat()
+            )
+    
     # Single-provider routing - exactly one provider per request
     if request.provider == "openai":
         return await _chat_openai_simple(request, db)

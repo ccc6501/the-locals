@@ -1,6 +1,6 @@
 # fastapi-backend/routers/rooms.py
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -27,6 +27,12 @@ class RoomOut(BaseModel):
     type: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    ai_enabled: Optional[bool] = True  # Phase 6
+    notifications_enabled: Optional[bool] = True  # Phase 6
+    self_destruct_at: Optional[datetime] = None  # Phase 6B
+    total_messages: Optional[int] = 0  # Phase 6B
+    total_ai_requests: Optional[int] = 0  # Phase 6B
+    last_activity_at: Optional[datetime] = None  # Phase 6B
 
     class Config:
         from_attributes = True
@@ -67,6 +73,19 @@ class RoomMemberOut(BaseModel):
 
 class AddMemberRequest(BaseModel):
     user_id: int
+
+
+class RoomUpdateRequest(BaseModel):
+    """Phase 6B: Update room name and settings"""
+    name: Optional[str] = None
+    ai_enabled: Optional[bool] = None
+    notifications_enabled: Optional[bool] = None
+    self_destruct_at: Optional[datetime] = None
+
+
+class SelfDestructRequest(BaseModel):
+    """Phase 6B: Set self-destruct timer"""
+    duration: str  # "7d", "30d", "90d", "never"
 
 
 # ---------- Helpers ----------
@@ -120,6 +139,8 @@ def ensure_membership_for_current_user(db: Session, thread_id: int):
     Self-heal membership for legacy rooms.
     If a room has zero members, add current user as owner.
     If a room has members but current user is missing, add current user as member.
+    
+    Phase 6B: Global admins are NOT auto-added to rooms (privacy protection).
     """
     thread = db.query(Thread).filter(Thread.id == thread_id).first()
     if not thread:
@@ -128,6 +149,10 @@ def ensure_membership_for_current_user(db: Session, thread_id: int):
     # Check how many members exist for this room
     member_count = db.query(RoomMember).filter(RoomMember.thread_id == thread_id).count()
     current_user = get_current_user(db)
+    
+    # Phase 6B: Do NOT auto-add global admins to rooms (they can manage but not see messages)
+    if current_user.role == "admin":
+        return
     
     # Check if current user is already a member
     existing_membership = get_membership(db, current_user.id, thread_id)
@@ -162,6 +187,7 @@ def ensure_membership_for_current_user(db: Session, thread_id: int):
 def list_rooms(db: Session = Depends(get_db)):
     """
     Return rooms where the current user is a member.
+    Phase 6B: All users (including admins) only see rooms they're members of in main chat UI.
     Self-heals membership for legacy rooms with no members.
     """
     current_user = get_current_user(db)
@@ -173,12 +199,14 @@ def list_rooms(db: Session = Depends(get_db)):
     all_rooms = db.query(Thread).all()
     
     # Self-heal: ensure membership for rooms with zero members
-    for room in all_rooms:
-        member_count = db.query(RoomMember).filter(RoomMember.thread_id == room.id).count()
-        if member_count == 0:
-            ensure_membership_for_current_user(db, room.id)
+    # Skip for admins to prevent auto-joining all orphaned rooms
+    if current_user.role != "admin":
+        for room in all_rooms:
+            member_count = db.query(RoomMember).filter(RoomMember.thread_id == room.id).count()
+            if member_count == 0:
+                ensure_membership_for_current_user(db, room.id)
     
-    # Now return only rooms where current user is a member
+    # Return only rooms where current user is a member
     user_room_ids = (
         db.query(RoomMember.thread_id)
         .filter(RoomMember.user_id == current_user.id)
@@ -189,6 +217,31 @@ def list_rooms(db: Session = Depends(get_db)):
     rooms = (
         db.query(Thread)
         .filter(Thread.id.in_(room_ids))
+        .order_by(Thread.updated_at.desc())
+        .all()
+    )
+    return rooms
+
+
+@router.get("/api/admin/rooms/all", response_model=List[RoomOut])
+def list_all_rooms_admin(db: Session = Depends(get_db)):
+    """
+    Phase 6B: Admin-only endpoint to list ALL rooms for management.
+    Returns all rooms regardless of membership for lifecycle management.
+    Does NOT grant message access - only for settings/metrics/cleanup.
+    """
+    current_user = get_current_user(db)
+    
+    # Require global admin role
+    if current_user.role != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Only global administrators can access all rooms"
+        )
+    
+    # Return all rooms sorted by last updated
+    rooms = (
+        db.query(Thread)
         .order_by(Thread.updated_at.desc())
         .all()
     )
@@ -312,10 +365,12 @@ def create_room_message(
     )
     db.add(message)
 
-    # Update room's updated_at
+    # Phase 6B: Update room metrics and activity
     thread = db.query(Thread).filter(Thread.id == room_id).first()
     if thread:
         thread.updated_at = now
+        thread.last_activity_at = now
+        thread.total_messages = (thread.total_messages or 0) + 1
 
     db.commit()
     db.refresh(message)
@@ -326,14 +381,16 @@ def create_room_message(
 def get_room_members(room_id: int, db: Session = Depends(get_db)):
     """
     Get all members of a room with their user information.
-    Requires membership in the room.
+    Requires membership in the room (or global admin).
+    Phase 6B: Global admins can view members without being added to room.
     """
-    # Self-heal membership if needed
-    ensure_membership_for_current_user(db, room_id)
-    
-    # Require membership to view member list
     current_user = get_current_user(db)
-    require_membership(db, current_user, room_id)
+    is_global_admin = current_user.role == "admin"
+    
+    # Only self-heal membership for non-admins
+    if not is_global_admin:
+        ensure_membership_for_current_user(db, room_id)
+        require_membership(db, current_user, room_id)
     
     # Verify room exists
     room = db.query(Thread).filter(Thread.id == room_id).first()
@@ -430,3 +487,170 @@ def add_room_member(room_id: int, payload: AddMemberRequest, db: Session = Depen
         "role": new_membership.role,
         "joined_at": new_membership.created_at,
     }
+
+
+# ========== PHASE 6 & 6B: ROOM SETTINGS & ADVANCED MANAGEMENT ==========
+
+@router.patch("/api/rooms/{room_id}", response_model=RoomOut)
+def update_room(
+    room_id: int,
+    request: RoomUpdateRequest,
+    db: Session = Depends(get_db),
+):
+    """Phase 6B: Update room name and settings (owner/room admin/global admin)"""
+    current_user = get_current_user(db)
+    
+    # Get room
+    room = db.query(Thread).filter(Thread.id == room_id).first()
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+    
+    # Check permissions: global admin OR room owner/admin
+    is_global_admin = current_user.role == "admin"
+    membership = get_membership(db, current_user.id, room_id)
+    is_room_admin = membership and membership.role in ["owner", "admin"]
+    
+    if not is_global_admin and not is_room_admin:
+        raise HTTPException(status_code=403, detail="Only global admins or room owners/admins can update room settings")
+    
+    # Update fields if provided
+    now = datetime.utcnow()
+    if request.name is not None and request.name.strip():
+        room.name = request.name.strip()
+    if request.ai_enabled is not None:
+        room.ai_enabled = request.ai_enabled
+    if request.notifications_enabled is not None:
+        room.notifications_enabled = request.notifications_enabled
+    if request.self_destruct_at is not None:
+        room.self_destruct_at = request.self_destruct_at
+    
+    room.updated_at = now
+    db.commit()
+    db.refresh(room)
+    
+    return room
+
+
+@router.post("/api/rooms/{room_id}/self-destruct")
+def set_self_destruct(
+    room_id: int,
+    request: SelfDestructRequest,
+    db: Session = Depends(get_db),
+):
+    """Phase 6B: Set self-destruct timer (room owner/admin OR global admin)"""
+    current_user = get_current_user(db)
+    
+    # Get room
+    room = db.query(Thread).filter(Thread.id == room_id).first()
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+    
+    # Check permissions: global admin OR room owner/admin
+    is_global_admin = current_user.role == "admin"
+    membership = get_membership(db, current_user.id, room_id)
+    is_room_admin = membership and membership.role in ["owner", "admin"]
+    
+    if not is_global_admin and not is_room_admin:
+        raise HTTPException(status_code=403, detail="Only global admins or room owners/admins can set self-destruct timer")
+    
+    # Calculate expiration based on duration
+    now = datetime.utcnow()
+    if request.duration == "never":
+        room.self_destruct_at = None
+    elif request.duration == "7d":
+        room.self_destruct_at = now + timedelta(days=7)
+    elif request.duration == "30d":
+        room.self_destruct_at = now + timedelta(days=30)
+    elif request.duration == "90d":
+        room.self_destruct_at = now + timedelta(days=90)
+    else:
+        raise HTTPException(status_code=400, detail="Invalid duration. Use '7d', '30d', '90d', or 'never'")
+    
+    room.updated_at = now
+    db.commit()
+    db.refresh(room)
+    
+    return {
+        "success": True,
+        "self_destruct_at": room.self_destruct_at,
+        "duration": request.duration,
+    }
+
+
+@router.get("/api/rooms/{room_id}/metrics")
+def get_room_metrics(
+    room_id: int,
+    db: Session = Depends(get_db),
+):
+    """Phase 6B: Get room metrics (permission-aware)"""
+    current_user = get_current_user(db)
+    
+    # Get room
+    room = db.query(Thread).filter(Thread.id == room_id).first()
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+    
+    # Check membership
+    membership = get_membership(db, current_user.id, room_id)
+    if not membership:
+        raise HTTPException(status_code=403, detail="Not a member of this room")
+    
+    # Get member count
+    member_count = db.query(RoomMember).filter(RoomMember.thread_id == room_id).count()
+    
+    # Calculate time until self-destruct
+    time_remaining = None
+    if room.self_destruct_at:
+        delta = room.self_destruct_at - datetime.utcnow()
+        if delta.total_seconds() > 0:
+            days = delta.days
+            hours = delta.seconds // 3600
+            minutes = (delta.seconds % 3600) // 60
+            time_remaining = {
+                "days": days,
+                "hours": hours,
+                "minutes": minutes,
+                "total_seconds": int(delta.total_seconds()),
+            }
+    
+    return {
+        "room_id": room.id,
+        "room_name": room.name,
+        "created_at": room.created_at,
+        "total_messages": room.total_messages,
+        "total_ai_requests": room.total_ai_requests,
+        "member_count": member_count,
+        "last_activity_at": room.last_activity_at,
+        "self_destruct_at": room.self_destruct_at,
+        "time_remaining": time_remaining,
+        "ai_enabled": room.ai_enabled,
+        "notifications_enabled": room.notifications_enabled,
+    }
+
+
+@router.delete("/api/rooms/{room_id}")
+def delete_room(
+    room_id: int,
+    db: Session = Depends(get_db),
+):
+    """Phase 6B: Delete room (room owner OR global admin)"""
+    current_user = get_current_user(db)
+    
+    # Get room
+    room = db.query(Thread).filter(Thread.id == room_id).first()
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+    
+    # Check permissions: global admin OR room owner
+    is_global_admin = current_user.role == "admin"
+    membership = get_membership(db, current_user.id, room_id)
+    is_owner = membership and membership.role == "owner"
+    
+    if not is_global_admin and not is_owner:
+        raise HTTPException(status_code=403, detail="Only global admins or room owner can delete the room")
+    
+    # Delete room (CASCADE will handle messages and memberships)
+    db.delete(room)
+    db.commit()
+    
+    return {"success": True, "message": f"Room '{room.name}' deleted successfully"}

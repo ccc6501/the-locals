@@ -46,7 +46,7 @@ def is_member(member: Optional[RoomMember]) -> bool:
     return member is not None
 
 
-def require_membership(db: Session, user: User, room_id: int) -> RoomMember:
+def require_membership(db: Session, user: User, room_id: int, allow_global_admin: bool = False) -> RoomMember:
     """
     Require that a user is a member of a room.
     
@@ -54,16 +54,27 @@ def require_membership(db: Session, user: User, room_id: int) -> RoomMember:
         db: Database session
         user: Current user
         room_id: Room (Thread) ID to check
+        allow_global_admin: If True, global admins bypass membership check (for management, not message viewing)
         
     Returns:
         RoomMember record if user is a member
         
     Raises:
-        HTTPException(403) if user is not a member
+        HTTPException(403) if user is not a member and not a global admin
     """
     membership = get_membership(db, user.id, room_id)
     
+    # Global admins can bypass membership check ONLY if explicitly allowed
     if membership is None:
+        if allow_global_admin and user.role == "admin":
+            # Create a pseudo-membership for permission checks only
+            # This won't be persisted to DB
+            pseudo_membership = RoomMember()
+            pseudo_membership.user_id = user.id
+            pseudo_membership.thread_id = room_id
+            pseudo_membership.role = "admin"  # Give admin role for permission checks
+            return pseudo_membership
+        
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not a member of this room"

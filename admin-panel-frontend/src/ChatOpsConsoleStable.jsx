@@ -14,6 +14,7 @@ import { DashboardPanel } from './components/DashboardPanel';
 import { SystemPanel } from './components/SystemPanel';
 import { CloudPanel } from './components/CloudPanel';
 import RoomMembersPanel from './components/RoomMembersPanel';
+import RoomSettingsPanel from './components/RoomSettingsPanel';
 import UsersView from './components/UsersView';
 import {
     Bot,
@@ -33,7 +34,8 @@ import {
     Cpu,
     X,
     Plus,
-    Info
+    Info,
+    Clock
 } from 'lucide-react';
 
 // Helpers
@@ -113,19 +115,21 @@ const ChatOpsConsoleStable = () => {
     const { currentUser, loading: userLoading } = useCurrentUser();
 
     // Rooms (persistent from /api/rooms) - now from context
-    const { rooms, activeRoomId, setActiveRoomId, createRoom, loading: roomsLoading } = useRoomsContext();
+    const { rooms, setRooms, activeRoomId, setActiveRoomId, createRoom, refreshRooms, loading: roomsLoading } = useRoomsContext();
 
     // Room members for active room
     const { members, loading: membersLoading, error: membersError } = useRoomMembers(activeRoomId);
 
     // Compute current user's membership and permissions
     const currentMembership = members.find(m => m.user_id === currentUser?.id);
-    const canManageMembers = currentMembership && (currentMembership.role === 'owner' || currentMembership.role === 'admin');
+    const isGlobalAdmin = currentUser?.role === 'admin';
+    const canManageMembers = isGlobalAdmin || (currentMembership && (currentMembership.role === 'owner' || currentMembership.role === 'admin'));
 
     // Views
     const [activeView, setActiveView] = useState('chat');
     const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
     const [showMembersPanel, setShowMembersPanel] = useState(false);
+    const [showSettingsPanel, setShowSettingsPanel] = useState(false);
 
     // Provider / model
     const [provider, setProvider] = useState(() => localStorage.getItem('theLocal.provider') || 'openai');
@@ -149,6 +153,7 @@ const ChatOpsConsoleStable = () => {
     const [logs, setLogs] = useState([]);
     const [ollamaStatus, setOllamaStatus] = useState(null);
     const [errors, setErrors] = useState([]); // toast errors
+    const [countdownRefresh, setCountdownRefresh] = useState(0); // Phase 6B: Trigger countdown badge refresh
 
     // Provider meta + polling via hook
     const providerMeta = useProviderStatus({
@@ -187,6 +192,13 @@ const ChatOpsConsoleStable = () => {
 
     // Scroll
     useEffect(() => { const c = messagesContainerRef.current; if (c) c.scrollTop = c.scrollHeight; }, [messages]);
+
+    // Phase 6B: Refresh rooms when switching back to chat view (in case admin deleted/updated rooms)
+    useEffect(() => {
+        if (activeView === 'chat' && refreshRooms) {
+            refreshRooms();
+        }
+    }, [activeView, refreshRooms]);
 
     // Load messages when active room changes
     useEffect(() => {
@@ -231,6 +243,14 @@ const ChatOpsConsoleStable = () => {
     }, []);
     useEffect(() => {
         const interval = setInterval(() => { refreshTailnetStats(); refreshSystemSummary(); refreshUserCount(); refreshLogs(); }, 30000);
+        return () => clearInterval(interval);
+    }, []);
+
+    // Phase 6B: Refresh countdown badge every minute to update time remaining
+    useEffect(() => {
+        const interval = setInterval(() => {
+            setCountdownRefresh(prev => prev + 1);
+        }, 60000); // 60 seconds
         return () => clearInterval(interval);
     }, []);
 
@@ -375,6 +395,33 @@ const ChatOpsConsoleStable = () => {
     };
 
     const handleKeyDown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } };
+
+    // Phase 6 & 6B: Room settings handlers
+    const handleRoomUpdated = (updatedRoom) => {
+        // Update the room in the rooms list
+        setRooms(prevRooms =>
+            prevRooms.map(r => r.id === updatedRoom.id ? { ...r, ...updatedRoom } : r)
+        );
+    };
+
+    const handleRoomDeleted = (roomId) => {
+        // Remove room from list
+        setRooms(prevRooms => prevRooms.filter(r => r.id !== roomId));
+
+        // Switch to a different room or default view
+        if (rooms && rooms.length > 1) {
+            const nextRoom = rooms.find(r => r.id !== roomId);
+            if (nextRoom) {
+                setActiveRoomId(nextRoom.id);
+            } else {
+                setActiveRoomId(null);
+                setActiveView('dashboard');
+            }
+        } else {
+            setActiveRoomId(null);
+            setActiveView('dashboard');
+        }
+    };
 
     const renderMessages = () => (
         <div className="space-y-3">
@@ -609,18 +656,62 @@ const ChatOpsConsoleStable = () => {
                                             ({rooms.find(r => r.id === activeRoomId)?.memberCount} members)
                                         </span>
                                     )}
+                                    {/* Phase 6B: Self-Destruct Countdown Badge */}
+                                    {(() => {
+                                        const room = rooms.find(r => r.id === activeRoomId);
+                                        if (!room?.self_destruct_at) return null;
+
+                                        const destructTime = new Date(room.self_destruct_at);
+                                        const now = new Date();
+                                        const diff = destructTime - now;
+
+                                        if (diff <= 0) return null; // Already expired
+
+                                        const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+                                        const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+                                        const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+
+                                        const isUrgent = diff < (24 * 60 * 60 * 1000); // Less than 24 hours
+                                        const timeStr = days > 0 ? `${days}d ${hours}h` : hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+
+                                        return (
+                                            <button
+                                                onClick={() => canManageMembers && setShowSettingsPanel(true)}
+                                                className={`flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${isUrgent
+                                                    ? 'bg-red-500/20 text-red-400 border border-red-500/30'
+                                                    : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                                                    } ${canManageMembers ? 'cursor-pointer hover:opacity-80' : 'cursor-default'}`}
+                                                title={canManageMembers ? 'Click to extend or cancel' : `Expires in ${timeStr}`}
+                                            >
+                                                <Clock className="w-3 h-3" />
+                                                <span>{timeStr}</span>
+                                            </button>
+                                        );
+                                    })()}
                                 </div>
-                                <button
-                                    onClick={() => setShowMembersPanel(!showMembersPanel)}
-                                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all ${showMembersPanel
-                                        ? 'bg-violet-500/20 text-violet-300 border border-violet-500/30'
-                                        : 'bg-slate-800/60 text-slate-400 border border-slate-700/60 hover:bg-slate-700/60 hover:text-slate-300'
-                                        }`}
-                                    aria-label="Room info"
-                                >
-                                    <Info className="w-3.5 h-3.5" />
-                                    <span className="hidden sm:inline">Info</span>
-                                </button>
+                                <div className="flex items-center gap-2">
+                                    {canManageMembers && (
+                                        <button
+                                            onClick={() => setShowSettingsPanel(true)}
+                                            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all bg-slate-800/60 text-slate-400 border border-slate-700/60 hover:bg-slate-700/60 hover:text-slate-300"
+                                            aria-label="Room settings"
+                                        >
+                                            <Settings className="w-3.5 h-3.5" />
+                                            <span className="hidden sm:inline">Settings</span>
+                                        </button>
+                                    )}
+                                    <button
+                                        onClick={() => setShowMembersPanel(!showMembersPanel)}
+                                        className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all ${showMembersPanel
+                                            ? 'bg-violet-500/20 text-violet-300 border border-violet-500/30'
+                                            : 'bg-slate-800/60 text-slate-400 border border-slate-700/60 hover:bg-slate-700/60 hover:text-slate-300'
+                                            }`}
+                                        aria-label="Room info"
+                                    >
+                                        <Info className="w-3.5 h-3.5" />
+                                        <span className="hidden sm:inline">Info</span>
+                                    </button>
+                                </div>
                             </div>
 
                             <div className="chat-scroll-area flex-1" ref={messagesContainerRef}>
@@ -710,7 +801,7 @@ const ChatOpsConsoleStable = () => {
                                 apiBase={API_BASE}
                             />
                         )}
-                        {activeView === 'system' && <SystemPanel tailnetStats={tailnetStats} refreshTailnetStats={refreshTailnetStats} exitNodeChanging={tailnetLoading} setExitNodeChanging={setTailnetLoading} />}
+                        {activeView === 'system' && <SystemPanel tailnetStats={tailnetStats} refreshTailnetStats={refreshTailnetStats} exitNodeChanging={tailnetLoading} setExitNodeChanging={setTailnetLoading} currentUser={currentUser} />}
                         {activeView === 'cloud' && <CloudPanel apiBase={API_BASE} />}
                         {activeView === 'users' && <UsersView />}
                         {activeView !== 'chat' && activeView !== 'connections' && activeView !== 'dashboard' && activeView !== 'system' && activeView !== 'cloud' && activeView !== 'users' && <ViewPlaceholder view={activeView} />}
@@ -721,6 +812,19 @@ const ChatOpsConsoleStable = () => {
                 errors={errors}
                 dismiss={(id) => setErrors(prev => prev.filter(e => e.id !== id))}
             />
+
+            {/* Phase 6 & 6B: Room Settings Panel */}
+            {activeRoomId && (
+                <RoomSettingsPanel
+                    room={rooms.find(r => r.id === activeRoomId)}
+                    isOpen={showSettingsPanel}
+                    onClose={() => setShowSettingsPanel(false)}
+                    onRoomUpdated={handleRoomUpdated}
+                    onRoomDeleted={handleRoomDeleted}
+                    userRole={currentMembership?.role || 'member'}
+                    userIsGlobalAdmin={isGlobalAdmin}
+                />
+            )}
         </div>
     );
 };

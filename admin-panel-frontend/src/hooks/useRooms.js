@@ -104,6 +104,7 @@ export function useRooms() {
 
     return {
         rooms,
+        setRooms,
         activeRoomId,
         setActiveRoomId,
         refreshRooms: loadRooms,

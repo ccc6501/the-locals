@@ -116,6 +116,10 @@ const ChatOpsConsoleStable = () => {
     // Room members for active room
     const { members, loading: membersLoading, error: membersError } = useRoomMembers(activeRoomId);
 
+    // Compute current user's membership and permissions
+    const currentMembership = members.find(m => m.user_id === currentUser?.id);
+    const canManageMembers = currentMembership && (currentMembership.role === 'owner' || currentMembership.role === 'admin');
+
     // Views
     const [activeView, setActiveView] = useState('chat');
     const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -650,6 +654,8 @@ const ChatOpsConsoleStable = () => {
                                         loading={membersLoading}
                                         error={membersError}
                                         onClose={() => setShowMembersPanel(false)}
+                                        canManageMembers={canManageMembers}
+                                        roomId={activeRoomId}
                                     />
                                 </div>
 
@@ -660,6 +666,8 @@ const ChatOpsConsoleStable = () => {
                                         loading={membersLoading}
                                         error={membersError}
                                         onClose={() => setShowMembersPanel(false)}
+                                        canManageMembers={canManageMembers}
+                                        roomId={activeRoomId}
                                     />
                                 </aside>
                             </>

@@ -15,7 +15,7 @@ export function useCurrentUser() {
         async function fetchCurrentUser() {
             try {
                 setLoading(true);
-                
+
                 // Call backend directly to preserve client IP for Tailscale auth
                 // Use window.location.hostname to get the server IP (works for both localhost and Tailscale)
                 const backendUrl = `http://${window.location.hostname}:8000/api/users/me`;

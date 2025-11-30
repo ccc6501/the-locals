@@ -369,8 +369,25 @@ const ChatOpsConsoleStable = () => {
         }
 
         setIsSending(true);
-        // Use current user's initials or handle for authorTag
-        const userInitials = currentUser?.initials || currentUser?.handle?.substring(0, 2).toUpperCase() || 'CC';
+        // Extract initials from user's name or handle
+        const getInitials = (user) => {
+            if (user?.initials) return user.initials;
+            if (user?.name) {
+                // Extract first letter of each word in name
+                const words = user.name.split(' ').filter(w => w.length > 0);
+                if (words.length >= 2) {
+                    return (words[0][0] + words[words.length - 1][0]).toUpperCase();
+                } else if (words.length === 1) {
+                    return words[0].substring(0, 2).toUpperCase();
+                }
+            }
+            if (user?.handle) {
+                return user.handle.replace('@', '').substring(0, 2).toUpperCase();
+            }
+            return 'CC';
+        };
+        
+        const userInitials = getInitials(currentUser);
         const userMsg = { id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`, role: 'user', authorTag: userInitials, text, createdAt: new Date().toISOString() };
         setMessages(prev => [...prev, userMsg]);
         setDraftMessage('');

@@ -196,18 +196,19 @@ const ActiveUsers = () => {
             </div>
 
             {/* User List */}
-            <div className="flex-1 overflow-y-auto p-6 space-y-3">
+            <div className="flex-1 overflow-y-auto p-6">
                 {users.length === 0 ? (
                     <div className="text-center text-slate-400 py-8">
                         <Users className="w-12 h-12 mx-auto mb-3 opacity-20" />
                         <p className="text-sm">No active users</p>
                     </div>
                 ) : (
-                    users.map((user) => (
-                        <div
-                            key={user.id}
-                            className="bg-slate-900/60 border border-slate-800/60 rounded-xl p-4 hover:bg-slate-900/80 hover:border-slate-700/60 transition-all"
-                        >
+                    <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
+                        {users.map((user) => (
+                            <div
+                                key={user.id}
+                                className="bg-slate-900/60 border border-slate-800/60 rounded-xl p-4 hover:bg-slate-900/80 hover:border-slate-700/60 transition-all"
+                            >
                             {editingUser === user.id ? (
                                 /* Edit Mode */
                                 <div className="space-y-3">
@@ -333,7 +334,8 @@ const ActiveUsers = () => {
                                 </>
                             )}
                         </div>
-                    ))
+                        ))}
+                    </div>
                 )}
             </div>
 

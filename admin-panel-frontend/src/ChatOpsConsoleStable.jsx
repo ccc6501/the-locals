@@ -26,7 +26,8 @@ import {
     Settings,
     Key,
     Cpu,
-    X
+    X,
+    Plus
 } from 'lucide-react';
 
 // Helpers
@@ -103,7 +104,7 @@ const ChatOpsConsoleStable = () => {
     const inputRef = useRef(null);
 
     // Rooms (persistent from /api/rooms) - now from context
-    const { rooms, activeRoomId, setActiveRoomId, loading: roomsLoading } = useRoomsContext();
+    const { rooms, activeRoomId, setActiveRoomId, createRoom, loading: roomsLoading } = useRoomsContext();
 
     // Views
     const [activeView, setActiveView] = useState('chat');
@@ -489,8 +490,30 @@ const ChatOpsConsoleStable = () => {
 
                             {/* Rooms section - only visible on mobile */}
                             <div className="mt-6 pt-4 border-t border-slate-800/60 lg:hidden">
-                                <div className="text-xs tracking-[0.2em] uppercase text-slate-500 mb-3 px-2">
-                                    Rooms
+                                <div className="flex items-center justify-between mb-3 px-2">
+                                    <div className="text-xs tracking-[0.2em] uppercase text-slate-500">
+                                        Rooms
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={async () => {
+                                            const name = window.prompt('New room name?');
+                                            if (!name || !name.trim()) return;
+                                            try {
+                                                await createRoom(name.trim());
+                                                setActiveView('chat');
+                                            } catch (err) {
+                                                console.error('Failed to create room:', err);
+                                                alert('Failed to create room. Please try again.');
+                                            }
+                                        }}
+                                        className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px]
+                                         bg-slate-800/70 border border-slate-700/70 text-slate-300
+                                         hover:bg-slate-700/70 active:scale-95 transition-all"
+                                    >
+                                        <Plus className="w-3 h-3" />
+                                        New
+                                    </button>
                                 </div>
                                 {rooms.length === 0 && (
                                     <div className="text-xs text-slate-400 px-2 py-2">No rooms yet.</div>
@@ -530,6 +553,7 @@ const ChatOpsConsoleStable = () => {
                                 rooms={rooms}
                                 activeRoomId={activeRoomId}
                                 onSelectRoom={setActiveRoomId}
+                                onCreateRoom={createRoom}
                                 loading={roomsLoading}
                             />
                         </aside>

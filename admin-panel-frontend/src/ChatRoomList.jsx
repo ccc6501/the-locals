@@ -7,13 +7,28 @@ import { MessageSquare, Plus, Loader2 } from "lucide-react";
  * @param {Array} rooms - List of room objects from useRooms hook
  * @param {number} activeRoomId - Currently selected room ID
  * @param {Function} onSelectRoom - Callback when room is clicked
+ * @param {Function} onCreateRoom - Callback to create a new room
  * @param {boolean} loading - Loading state
  * @param {string} error - Error message if any
  */
-const ChatRoomList = ({ rooms = [], activeRoomId, onSelectRoom, loading = false, error = null }) => {
+const ChatRoomList = ({ rooms = [], activeRoomId, onSelectRoom, onCreateRoom, loading = false, error = null }) => {
     const handleSelect = (roomId) => {
         if (!onSelectRoom) return;
         onSelectRoom(roomId);
+    };
+
+    const handleCreateRoom = async () => {
+        if (!onCreateRoom) return;
+
+        const name = window.prompt('New room name?');
+        if (!name || !name.trim()) return;
+
+        try {
+            await onCreateRoom(name.trim());
+        } catch (err) {
+            console.error('Failed to create room:', err);
+            alert('Failed to create room. Please try again.');
+        }
     };
 
     return (
@@ -24,10 +39,10 @@ const ChatRoomList = ({ rooms = [], activeRoomId, onSelectRoom, loading = false,
                 </h3>
                 <button
                     type="button"
-                    disabled
+                    onClick={handleCreateRoom}
                     className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px]
-                     bg-slate-900/70 border border-slate-700/70 text-slate-500
-                     cursor-not-allowed"
+                     bg-slate-800/70 border border-slate-700/70 text-slate-300
+                     hover:bg-slate-700/70 hover:border-slate-600 active:scale-95 transition-all"
                 >
                     <Plus className="w-3 h-3" />
                     New

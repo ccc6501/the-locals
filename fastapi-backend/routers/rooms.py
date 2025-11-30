@@ -1,165 +1,209 @@
-"""
-Persistent rooms (threads) and messages API
-Phase 1: Backend persistent storage for chat rooms using Thread and Message models
-"""
+# fastapi-backend/routers/rooms.py
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
-from sqlalchemy import desc
-from typing import List, Optional
 from datetime import datetime
+from typing import List, Optional
+
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 from database import get_db
-from models import User, Thread, Message
+from models import Thread, Message, User
 
 router = APIRouter()
 
 
-# ============================================
-# Response Models
-# ============================================
+# ---------- Pydantic schemas ----------
 
-class RoomResponse(BaseModel):
-    """Room (Thread) response model"""
+class RoomOut(BaseModel):
     id: int
     name: str
-    type: str
-    created_at: datetime
-    updated_at: datetime
-    
+    type: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
     class Config:
         from_attributes = True
 
 
-class MessageResponse(BaseModel):
-    """Message response model"""
+class MessageOut(BaseModel):
     id: int
     thread_id: int
-    user_id: Optional[int]
+    user_id: Optional[int] = None
     sender: str
     text: str
     timestamp: datetime
-    
+
     class Config:
         from_attributes = True
 
 
-class CreateMessageRequest(BaseModel):
-    """Request body for creating a message"""
+class RoomCreateRequest(BaseModel):
+    name: str
+    type: Optional[str] = "room"
+
+
+class MessageCreateRequest(BaseModel):
     text: str
 
 
-# ============================================
-# Helper Functions
-# ============================================
+# ---------- Helpers ----------
 
 def get_default_user(db: Session) -> User:
-    """
-    Get the default user (Chance) for Phase 1.
-    Tries to find user with handle='chance', falls back to user id=1
-    """
-    # Try to find user with handle 'chance'
     user = db.query(User).filter(User.handle == "chance").first()
-    
-    if not user:
-        # Fallback to user id=1
-        user = db.query(User).filter(User.id == 1).first()
-    
-    if not user:
-        raise HTTPException(
-            status_code=500,
-            detail="No default user found. Please create a user with handle 'chance' or id=1"
-        )
-    
-    return user
+    if user:
+        return user
+
+    user = db.query(User).filter(User.id == 1).first()
+    if user:
+        return user
+
+    raise HTTPException(
+        status_code=500,
+        detail="No default user found (handle='chance' or id=1).",
+    )
 
 
-# ============================================
-# Room (Thread) Endpoints
-# ============================================
+def get_or_create_default_room(db: Session) -> Thread:
+    # Try to find a 'General' room first
+    room = (
+        db.query(Thread)
+        .filter(Thread.name == "General", Thread.type == "room")
+        .first()
+    )
+    if room:
+        return room
 
-@router.get("/api/rooms", response_model=List[RoomResponse])
+    # If any thread exists, just return the most recently updated one
+    room = db.query(Thread).order_by(Thread.updated_at.desc()).first()
+    if room:
+        return room
+
+    # Otherwise create a brand new default room
+    now = datetime.utcnow()
+    room = Thread(
+        name="General",
+        type="room",
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(room)
+    db.commit()
+    db.refresh(room)
+    return room
+
+
+# ---------- Routes ----------
+
+@router.get("/api/rooms", response_model=List[RoomOut])
 def list_rooms(db: Session = Depends(get_db)):
     """
-    Get all rooms (threads) from the database.
-    For Phase 1, returns all threads of type 'room'.
+    Return all rooms (Threads). Guarantees at least one default room exists.
     """
-    # Query all threads of type 'room'
-    # You can filter by type if needed: .filter(Thread.type == "room")
-    threads = db.query(Thread).order_by(Thread.updated_at.desc()).all()
-    
-    return threads
+    # Ensure at least one room exists
+    get_or_create_default_room(db)
+
+    rooms = (
+        db.query(Thread)
+        .order_by(Thread.updated_at.desc())
+        .all()
+    )
+    return rooms
 
 
-@router.get("/api/rooms/{room_id}/messages", response_model=List[MessageResponse])
+@router.post("/api/rooms", response_model=RoomOut)
+def create_room(payload: RoomCreateRequest, db: Session = Depends(get_db)):
+    """
+    Create a new room (Thread) with the given name and optional type.
+    """
+    name = (payload.name or "").strip()
+    room_type = (payload.type or "room").strip()
+
+    if not name:
+        raise HTTPException(status_code=400, detail="Room name is required.")
+
+    # Optional: prevent exact duplicates
+    existing = (
+        db.query(Thread)
+        .filter(Thread.name == name, Thread.type == room_type)
+        .first()
+    )
+    if existing:
+        return existing
+
+    now = datetime.utcnow()
+    room = Thread(
+        name=name,
+        type=room_type,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(room)
+    db.commit()
+    db.refresh(room)
+    return room
+
+
+@router.get(
+    "/api/rooms/{room_id}/messages",
+    response_model=List[MessageOut],
+)
 def get_room_messages(
     room_id: int,
-    limit: int = Query(50, ge=1, le=100),
-    before: Optional[int] = Query(None, description="Message ID to fetch messages before"),
-    db: Session = Depends(get_db)
+    limit: int = 50,
+    before: Optional[int] = None,
+    db: Session = Depends(get_db),
 ):
     """
-    Get messages for a specific room (thread).
-    Messages are returned in ascending order (oldest first).
-    
-    Args:
-        room_id: The thread ID
-        limit: Maximum number of messages to return (default 50, max 100)
-        before: Optional message ID to fetch messages before (for pagination)
+    Return messages for a room ordered oldest->newest.
+    Supports simple 'before id' pagination.
     """
-    # Verify the room exists
-    room = db.query(Thread).filter(Thread.id == room_id).first()
-    if not room:
-        raise HTTPException(status_code=404, detail=f"Room {room_id} not found")
-    
-    # Build query for messages
     query = db.query(Message).filter(Message.thread_id == room_id)
-    
-    # Apply before filter for pagination
+
     if before is not None:
         query = query.filter(Message.id < before)
-    
-    # Order by timestamp/id ascending (oldest first) and limit
-    messages = query.order_by(Message.timestamp.asc(), Message.id.asc()).limit(limit).all()
-    
+
+    messages = (
+        query.order_by(Message.timestamp.asc())
+        .limit(min(max(limit, 1), 100))
+        .all()
+    )
     return messages
 
 
-@router.post("/api/rooms/{room_id}/messages", response_model=MessageResponse)
+@router.post(
+    "/api/rooms/{room_id}/messages",
+    response_model=MessageOut,
+)
 def create_room_message(
     room_id: int,
-    request: CreateMessageRequest,
-    db: Session = Depends(get_db)
+    payload: MessageCreateRequest,
+    db: Session = Depends(get_db),
 ):
     """
-    Create a new message in a room (thread).
-    
-    For Phase 1, uses a hardcoded user (Chance) from the database.
+    Create a new *user* message in the given room.
     """
-    # Verify the room exists
-    room = db.query(Thread).filter(Thread.id == room_id).first()
-    if not room:
-        raise HTTPException(status_code=404, detail=f"Room {room_id} not found")
-    
-    # Get the default user (Chance)
+    text = (payload.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Message text is required.")
+
     user = get_default_user(db)
-    
-    # Create the message
+
+    now = datetime.utcnow()
     message = Message(
         thread_id=room_id,
         user_id=user.id,
-        sender="CC",  # Chance's initials
-        text=request.text.strip(),
-        timestamp=datetime.utcnow()
+        sender="CC",  # Chance / current user tag
+        text=text,
+        timestamp=now,
     )
-    
     db.add(message)
+
+    # Update room's updated_at
+    thread = db.query(Thread).filter(Thread.id == room_id).first()
+    if thread:
+        thread.updated_at = now
+
     db.commit()
     db.refresh(message)
-    
-    # Update the thread's updated_at timestamp
-    room.updated_at = datetime.utcnow()
-    db.commit()
-    
     return message

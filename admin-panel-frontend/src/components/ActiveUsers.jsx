@@ -1,13 +1,40 @@
 import React, { useState, useEffect } from 'react';
-import { Users, Wifi, WifiOff, Smartphone, Monitor, Tablet, Shield, UserCog, User as UserIcon, Clock } from 'lucide-react';
+import { Users, Wifi, WifiOff, Smartphone, Monitor, Tablet, Shield, UserCog, User as UserIcon, Clock, Edit2, Save, X, RefreshCw } from 'lucide-react';
 
 const ActiveUsers = () => {
     const [users, setUsers] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
     const [error, setError] = useState(null);
     const [stats, setStats] = useState({ total: 0, online: 0 });
+    const [editingUser, setEditingUser] = useState(null);
+    const [editForm, setEditForm] = useState({});
+    const [currentUser, setCurrentUser] = useState(null);
 
-    const fetchActiveUsers = async () => {
+    // Fetch current user to determine admin status
+    const fetchCurrentUser = async () => {
+        try {
+            const response = await fetch('http://localhost:8000/api/users/me');
+            if (response.ok) {
+                const data = await response.json();
+                setCurrentUser(data);
+            }
+        } catch (err) {
+            console.error('Error fetching current user:', err);
+        }
+    };
+
+    // Send heartbeat to update this device's last_active timestamp
+    const sendHeartbeat = async () => {
+        try {
+            await fetch('http://localhost:8000/api/users/heartbeat', { method: 'POST' });
+        } catch (err) {
+            console.error('Heartbeat failed:', err);
+        }
+    };
+
+    const fetchActiveUsers = async (showRefreshing = false) => {
+        if (showRefreshing) setRefreshing(true);
         try {
             const response = await fetch('http://localhost:8000/api/users/active/tailscale');
             if (!response.ok) throw new Error('Failed to fetch users');
@@ -20,29 +47,77 @@ const ActiveUsers = () => {
             setError(err.message);
         } finally {
             setLoading(false);
+            if (showRefreshing) setRefreshing(false);
         }
     };
 
+    const handleRefresh = () => {
+        fetchActiveUsers(true);
+    };
+
     useEffect(() => {
+        fetchCurrentUser();
         fetchActiveUsers();
+        sendHeartbeat(); // Initial heartbeat
+        
         // Refresh every 10 seconds
-        const interval = setInterval(fetchActiveUsers, 10000);
-        return () => clearInterval(interval);
+        const refreshInterval = setInterval(fetchActiveUsers, 10000);
+        // Send heartbeat every 30 seconds to stay online
+        const heartbeatInterval = setInterval(sendHeartbeat, 30000);
+        
+        return () => {
+            clearInterval(refreshInterval);
+            clearInterval(heartbeatInterval);
+        };
     }, []);
+
+    const startEdit = (user) => {
+        setEditingUser(user.id);
+        setEditForm({
+            name: user.name,
+            email: user.email,
+            role: user.role
+        });
+    };
+
+    const cancelEdit = () => {
+        setEditingUser(null);
+        setEditForm({});
+    };
+
+    const saveEdit = async (userId) => {
+        try {
+            const response = await fetch(`http://localhost:8000/api/users/${userId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(editForm)
+            });
+            
+            if (!response.ok) throw new Error('Failed to update user');
+            
+            // Refresh users list
+            await fetchActiveUsers();
+            setEditingUser(null);
+            setEditForm({});
+        } catch (err) {
+            console.error('Error updating user:', err);
+            alert('Failed to update user: ' + err.message);
+        }
+    };
 
     const getRoleIcon = (role) => {
         switch(role) {
-            case 'admin': return <Shield className="w-4 h-4 text-rose-400" />;
-            case 'moderator': return <UserCog className="w-4 h-4 text-sky-400" />;
-            default: return <UserIcon className="w-4 h-4 text-slate-400" />;
+            case 'admin': return <Shield className="w-4 h-4" />;
+            case 'moderator': return <UserCog className="w-4 h-4" />;
+            default: return <UserIcon className="w-4 h-4" />;
         }
     };
 
     const getRoleBadgeColor = (role) => {
         switch(role) {
-            case 'admin': return 'bg-rose-500/20 text-rose-300 border-rose-500/30';
-            case 'moderator': return 'bg-sky-500/20 text-sky-300 border-sky-500/30';
-            default: return 'bg-slate-500/20 text-slate-300 border-slate-500/30';
+            case 'admin': return 'from-rose-600/30 to-pink-600/30 border-rose-500/40 text-rose-300';
+            case 'moderator': return 'from-sky-600/30 to-cyan-600/30 border-sky-500/40 text-sky-300';
+            default: return 'from-slate-600/30 to-slate-700/30 border-slate-500/40 text-slate-300';
         }
     };
 
@@ -53,6 +128,10 @@ const ActiveUsers = () => {
             default: return <Monitor className="w-4 h-4" />;
         }
     };
+
+    const isAdmin = currentUser && currentUser.role === 'admin';
+
+
 
     if (loading) {
         return (
@@ -90,10 +169,12 @@ const ActiveUsers = () => {
                         </div>
                     </div>
                     <button 
-                        onClick={fetchActiveUsers}
-                        className="px-3 py-1.5 rounded-lg bg-slate-800/60 hover:bg-slate-800 text-slate-300 text-xs font-medium transition-colors"
+                        onClick={handleRefresh}
+                        disabled={refreshing}
+                        className="px-3 py-1.5 rounded-lg bg-slate-800/60 hover:bg-slate-700 disabled:opacity-50 text-slate-300 text-xs font-medium transition-colors flex items-center gap-2"
                     >
-                        Refresh
+                        <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+                        {refreshing ? 'Refreshing...' : 'Refresh'}
                     </button>
                 </div>
 
@@ -121,63 +202,132 @@ const ActiveUsers = () => {
                     users.map((user) => (
                         <div 
                             key={user.id}
-                            className="bg-slate-900/40 border border-slate-800/50 rounded-xl p-4 hover:bg-slate-900/60 hover:border-slate-700/50 transition-all"
+                            className="bg-slate-900/60 border border-slate-800/60 rounded-xl p-4 hover:bg-slate-900/80 hover:border-slate-700/60 transition-all"
                         >
-                            {/* User Header */}
-                            <div className="flex items-start justify-between mb-3">
-                                <div className="flex items-center gap-3">
-                                    {/* Avatar */}
-                                    <div className={`relative w-10 h-10 rounded-full bg-gradient-to-br ${
-                                        user.role === 'admin' ? 'from-rose-600 to-pink-600' :
-                                        user.role === 'moderator' ? 'from-sky-600 to-cyan-600' :
-                                        'from-slate-600 to-slate-700'
-                                    } flex items-center justify-center text-white font-semibold`}>
-                                        {user.name.charAt(0).toUpperCase()}
-                                        {/* Online Indicator */}
-                                        {user.isOnline && (
-                                            <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-emerald-500 border-2 border-slate-900 rounded-full"></div>
-                                        )}
+                            {editingUser === user.id ? (
+                                /* Edit Mode */
+                                <div className="space-y-3">
+                                    <div className="flex items-center justify-between mb-3">
+                                        <h3 className="text-sm font-semibold text-white">Edit User</h3>
+                                        <div className="flex gap-2">
+                                            <button
+                                                onClick={() => saveEdit(user.id)}
+                                                className="p-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/30 text-emerald-400 transition-colors"
+                                            >
+                                                <Save className="w-4 h-4" />
+                                            </button>
+                                            <button
+                                                onClick={cancelEdit}
+                                                className="p-1.5 rounded-lg bg-slate-700/40 hover:bg-slate-700/60 border border-slate-600/40 text-slate-400 transition-colors"
+                                            >
+                                                <X className="w-4 h-4" />
+                                            </button>
+                                        </div>
                                     </div>
                                     
-                                    {/* User Info */}
                                     <div>
-                                        <div className="flex items-center gap-2">
-                                            <span className="text-sm font-medium text-white">{user.name}</span>
-                                            {user.isOnline ? (
-                                                <Wifi className="w-3.5 h-3.5 text-emerald-400" />
-                                            ) : (
-                                                <WifiOff className="w-3.5 h-3.5 text-slate-500" />
-                                            )}
-                                        </div>
-                                        <div className="text-xs text-slate-400">{user.handle}</div>
+                                        <label className="text-xs text-slate-400 block mb-1">Name</label>
+                                        <input
+                                            type="text"
+                                            value={editForm.name}
+                                            onChange={(e) => setEditForm({...editForm, name: e.target.value})}
+                                            className="w-full px-3 py-2 rounded-lg bg-slate-950/50 border border-slate-700/50 text-white text-sm focus:outline-none focus:border-sky-500/50"
+                                        />
+                                    </div>
+                                    
+                                    <div>
+                                        <label className="text-xs text-slate-400 block mb-1">Email</label>
+                                        <input
+                                            type="email"
+                                            value={editForm.email}
+                                            onChange={(e) => setEditForm({...editForm, email: e.target.value})}
+                                            className="w-full px-3 py-2 rounded-lg bg-slate-950/50 border border-slate-700/50 text-white text-sm focus:outline-none focus:border-sky-500/50"
+                                        />
+                                    </div>
+                                    
+                                    <div>
+                                        <label className="text-xs text-slate-400 block mb-1">Role</label>
+                                        <select
+                                            value={editForm.role}
+                                            onChange={(e) => setEditForm({...editForm, role: e.target.value})}
+                                            className="w-full px-3 py-2 rounded-lg bg-slate-950/50 border border-slate-700/50 text-white text-sm focus:outline-none focus:border-sky-500/50"
+                                        >
+                                            <option value="user">User</option>
+                                            <option value="moderator">Moderator</option>
+                                            <option value="admin">Admin</option>
+                                        </select>
                                     </div>
                                 </div>
+                            ) : (
+                                /* View Mode */
+                                <>
+                                    {/* User Header */}
+                                    <div className="flex items-start justify-between mb-3">
+                                        <div className="flex items-center gap-3 flex-1 min-w-0">
+                                            {/* Avatar with Online Indicator */}
+                                            <div className={`relative w-12 h-12 rounded-xl bg-gradient-to-br ${getRoleBadgeColor(user.role)} flex items-center justify-center text-white font-bold text-lg shrink-0`}>
+                                                {user.name.charAt(0).toUpperCase()}
+                                                {user.isOnline && (
+                                                    <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-emerald-500 border-2 border-slate-900 rounded-full"></div>
+                                                )}
+                                            </div>
+                                            
+                                            {/* User Info */}
+                                            <div className="flex-1 min-w-0">
+                                                <div className="flex items-center gap-2 mb-0.5">
+                                                    <span className="text-sm font-semibold text-white truncate">{user.name}</span>
+                                                    {user.isOnline ? (
+                                                        <Wifi className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                                                    ) : (
+                                                        <WifiOff className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                                                    )}
+                                                </div>
+                                                <div className="text-xs text-slate-400 truncate">{user.handle}</div>
+                                                <div className="text-xs text-slate-500 truncate">{user.email}</div>
+                                            </div>
+                                        </div>
 
-                                {/* Role Badge */}
-                                <div className={`flex items-center gap-1.5 px-2 py-1 rounded-lg border text-xs font-medium ${getRoleBadgeColor(user.role)}`}>
-                                    {getRoleIcon(user.role)}
-                                    <span>{user.role}</span>
-                                </div>
-                            </div>
+                                        {/* Actions */}
+                                        <div className="flex items-center gap-2 shrink-0 ml-2">
+                                            {/* Role Badge */}
+                                            <div className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-gradient-to-br border text-xs font-medium ${getRoleBadgeColor(user.role)}`}>
+                                                {getRoleIcon(user.role)}
+                                                <span className="capitalize">{user.role}</span>
+                                            </div>
+                                            
+                                            {/* Edit Button (Admin Only) */}
+                                            {isAdmin && (
+                                                <button
+                                                    onClick={() => startEdit(user)}
+                                                    className="p-1.5 rounded-lg bg-slate-800/60 hover:bg-slate-700/60 border border-slate-700/50 text-slate-400 hover:text-white transition-all"
+                                                    title="Edit user"
+                                                >
+                                                    <Edit2 className="w-3.5 h-3.5" />
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
 
-                            {/* Device Info */}
-                            <div className="space-y-2">
-                                <div className="flex items-center gap-2 text-xs">
-                                    {getDeviceIcon(user.deviceType)}
-                                    <span className="text-slate-400">{user.deviceName}</span>
-                                </div>
-                                
-                                <div className="flex items-center gap-2 text-xs text-slate-500">
-                                    <code className="px-2 py-0.5 rounded bg-slate-950/50 font-mono text-[10px]">
-                                        {user.tailscaleIp}
-                                    </code>
-                                </div>
-
-                                <div className="flex items-center gap-2 text-xs text-slate-500">
-                                    <Clock className="w-3.5 h-3.5" />
-                                    <span>{user.lastSeen}</span>
-                                </div>
-                            </div>
+                                    {/* Device Info */}
+                                    <div className="grid grid-cols-2 gap-2 pt-3 border-t border-slate-800/50">
+                                        <div className="flex items-center gap-2 text-xs">
+                                            {getDeviceIcon(user.deviceType)}
+                                            <span className="text-slate-400 truncate">{user.deviceName}</span>
+                                        </div>
+                                        
+                                        <div className="flex items-center gap-2 text-xs justify-end">
+                                            <Clock className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                                            <span className="text-slate-400">{user.lastSeen}</span>
+                                        </div>
+                                        
+                                        <div className="col-span-2 flex items-center gap-2 mt-1">
+                                            <code className="px-2 py-1 rounded bg-slate-950/60 border border-slate-800/50 font-mono text-[10px] text-slate-400">
+                                                {user.tailscaleIp}
+                                            </code>
+                                        </div>
+                                    </div>
+                                </>
+                            )}
                         </div>
                     ))
                 )}

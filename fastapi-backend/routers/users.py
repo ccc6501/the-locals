@@ -153,6 +153,31 @@ async def get_active_tailscale_users(db: Session = Depends(get_db)):
     }
 
 
+@router.post("/heartbeat")
+async def user_heartbeat(db: Session = Depends(get_db)):
+    """
+    Update device last_active timestamp to show user is online
+    Called periodically by frontend to maintain online status
+    """
+    from datetime import datetime
+    from fastapi import Request
+    
+    # For now, update the localhost device (home-hub)
+    # In production, this would use IP-based auth from tailscale_auth.py
+    device = db.query(Device).filter(
+        Device.tailscale_ip == "100.88.23.90"  # home-hub
+    ).first()
+    
+    if device:
+        device.last_active = datetime.utcnow()
+        device.is_active = True
+        db.commit()
+        return {"status": "ok", "device": device.device_name, "timestamp": device.last_active.isoformat()}
+    
+    return {"status": "no_device", "message": "No Tailscale device found"}
+
+
+
 @router.get("", response_model=List[UserResponse], response_model_by_alias=True)
 async def get_users(
     db: Session = Depends(get_db)

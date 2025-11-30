@@ -14,7 +14,8 @@ const ActiveUsers = () => {
     // Fetch current user to determine admin status
     const fetchCurrentUser = async () => {
         try {
-            const response = await fetch('http://localhost:8000/api/users/me');
+            const backendUrl = `http://${window.location.hostname}:8000/api/users/me`;
+            const response = await fetch(backendUrl);
             if (response.ok) {
                 const data = await response.json();
                 setCurrentUser(data);
@@ -27,7 +28,8 @@ const ActiveUsers = () => {
     // Send heartbeat to update this device's last_active timestamp
     const sendHeartbeat = async () => {
         try {
-            await fetch('http://localhost:8000/api/users/heartbeat', { method: 'POST' });
+            const backendUrl = `http://${window.location.hostname}:8000/api/users/heartbeat`;
+            await fetch(backendUrl, { method: 'POST' });
         } catch (err) {
             console.error('Heartbeat failed:', err);
         }
@@ -36,7 +38,8 @@ const ActiveUsers = () => {
     const fetchActiveUsers = async (showRefreshing = false) => {
         if (showRefreshing) setRefreshing(true);
         try {
-            const response = await fetch('http://localhost:8000/api/users/active/tailscale');
+            const backendUrl = `http://${window.location.hostname}:8000/api/users/active/tailscale`;
+            const response = await fetch(backendUrl);
             if (!response.ok) throw new Error('Failed to fetch users');
             const data = await response.json();
             setUsers(data.users || []);
@@ -87,7 +90,8 @@ const ActiveUsers = () => {
 
     const saveEdit = async (userId) => {
         try {
-            const response = await fetch(`http://localhost:8000/api/users/${userId}`, {
+            const backendUrl = `http://${window.location.hostname}:8000/api/users/${userId}`;
+            const response = await fetch(backendUrl, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(editForm)

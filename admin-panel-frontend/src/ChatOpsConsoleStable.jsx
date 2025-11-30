@@ -369,7 +369,9 @@ const ChatOpsConsoleStable = () => {
         }
 
         setIsSending(true);
-        const userMsg = { id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`, role: 'user', authorTag: 'CC', text, createdAt: new Date().toISOString() };
+        // Use current user's initials or handle for authorTag
+        const userInitials = currentUser?.initials || currentUser?.handle?.substring(0, 2).toUpperCase() || 'CC';
+        const userMsg = { id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`, role: 'user', authorTag: userInitials, text, createdAt: new Date().toISOString() };
         setMessages(prev => [...prev, userMsg]);
         setDraftMessage('');
         if (inputRef.current) setTimeout(() => inputRef.current && inputRef.current.blur(), 0);

@@ -14,6 +14,7 @@ import { DashboardPanel } from './components/DashboardPanel';
 import { SystemPanel } from './components/SystemPanel';
 import { CloudPanel } from './components/CloudPanel';
 import RoomMembersPanel from './components/RoomMembersPanel';
+import UsersView from './components/UsersView';
 import {
     Bot,
     Menu,
@@ -22,6 +23,7 @@ import {
     Share2,
     BarChart3,
     User,
+    Users,
     UserCircle,
     Cloud,
     Wifi,
@@ -506,13 +508,14 @@ const ChatOpsConsoleStable = () => {
                             </div>
                         </div>
                         <nav className="p-4 flex-none space-y-2 border-t border-slate-800/60 bg-slate-950/50 backdrop-blur-md">
-                            {['dashboard', 'chat', 'connections', 'cloud', 'stats', 'system', 'profile', 'settings'].map(view => (
+                            {['dashboard', 'chat', 'connections', 'cloud', 'stats', 'users', 'system', 'profile', 'settings'].map(view => (
                                 <button key={view} onClick={() => { setActiveView(view); setMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-sm font-medium transition-all ${activeView === view ? 'bg-gradient-to-r from-violet-600 to-sky-600 text-white shadow-lg' : 'text-slate-300 hover:bg-slate-800/70'}`}>
                                     {view === 'dashboard' && <Home className="w-5 h-5" />}
                                     {view === 'chat' && <MessageSquare className="w-5 h-5" />}
                                     {view === 'connections' && <Share2 className="w-5 h-5" />}
                                     {view === 'cloud' && <Cloud className="w-5 h-5" />}
                                     {view === 'stats' && <BarChart3 className="w-5 h-5" />}
+                                    {view === 'users' && <Users className="w-5 h-5" />}
                                     {view === 'system' && <User className="w-5 h-5" />}
                                     {view === 'profile' && <UserCircle className="w-5 h-5" />}
                                     {view === 'settings' && <Settings className="w-5 h-5" />}
@@ -709,7 +712,8 @@ const ChatOpsConsoleStable = () => {
                         )}
                         {activeView === 'system' && <SystemPanel tailnetStats={tailnetStats} refreshTailnetStats={refreshTailnetStats} exitNodeChanging={tailnetLoading} setExitNodeChanging={setTailnetLoading} />}
                         {activeView === 'cloud' && <CloudPanel apiBase={API_BASE} />}
-                        {activeView !== 'chat' && activeView !== 'connections' && activeView !== 'dashboard' && activeView !== 'system' && activeView !== 'cloud' && <ViewPlaceholder view={activeView} />}
+                        {activeView === 'users' && <UsersView />}
+                        {activeView !== 'chat' && activeView !== 'connections' && activeView !== 'dashboard' && activeView !== 'system' && activeView !== 'cloud' && activeView !== 'users' && <ViewPlaceholder view={activeView} />}
                     </div>
                 )}
             </main>

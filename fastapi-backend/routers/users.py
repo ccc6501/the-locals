@@ -2,7 +2,7 @@
 User management routes
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Body
+from fastapi import APIRouter, Depends, HTTPException, status, Body, Request
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -16,17 +16,27 @@ from schemas import (
 )
 from auth_utils import get_current_active_user, require_admin, require_moderator, get_password_hash
 from auth.current_user import get_current_user
+from tailscale_auth import get_user_by_tailscale_ip, get_client_ip
 
 router = APIRouter()
 
 
 @router.get("/me", response_model=UserResponse)
-async def get_me(db: Session = Depends(get_db)):
+async def get_me(request: Request, db: Session = Depends(get_db)):
     """
-    Get current user information.
-    For Phase 4A, always returns Chance (no auth yet).
+    Get current user information via Tailscale IP detection.
+    Falls back to default @chance if no Tailscale user found.
     """
-    current_user = get_current_user(db)
+    # Get client IP from request
+    client_ip = get_client_ip(request)
+    
+    # Try to find user by Tailscale IP
+    current_user = get_user_by_tailscale_ip(db, client_ip)
+    
+    # Fallback to default user if no Tailscale match
+    if not current_user:
+        current_user = get_current_user(db)
+    
     return current_user
 
 

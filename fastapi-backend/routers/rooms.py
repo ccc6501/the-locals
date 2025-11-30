@@ -10,6 +10,11 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models import Thread, Message, User, RoomMember
 from auth.current_user import get_current_user
+from auth.room_permissions import (
+    get_membership,
+    require_membership,
+    can_add_members,
+)
 
 router = APIRouter()
 
@@ -110,18 +115,80 @@ def get_or_create_default_room(db: Session) -> Thread:
     return room
 
 
+def ensure_membership_for_current_user(db: Session, thread_id: int):
+    """
+    Self-heal membership for legacy rooms.
+    If a room has zero members, add current user as owner.
+    If a room has members but current user is missing, add current user as member.
+    """
+    thread = db.query(Thread).filter(Thread.id == thread_id).first()
+    if not thread:
+        return
+    
+    # Check how many members exist for this room
+    member_count = db.query(RoomMember).filter(RoomMember.thread_id == thread_id).count()
+    current_user = get_current_user(db)
+    
+    # Check if current user is already a member
+    existing_membership = get_membership(db, current_user.id, thread_id)
+    
+    if member_count == 0:
+        # Room has no members - claim it as owner
+        now = datetime.utcnow()
+        membership = RoomMember(
+            thread_id=thread_id,
+            user_id=current_user.id,
+            role="owner",
+            created_at=now,
+        )
+        db.add(membership)
+        db.commit()
+    elif existing_membership is None:
+        # Room has members but current user is not one - add as regular member
+        now = datetime.utcnow()
+        membership = RoomMember(
+            thread_id=thread_id,
+            user_id=current_user.id,
+            role="member",
+            created_at=now,
+        )
+        db.add(membership)
+        db.commit()
+
+
 # ---------- Routes ----------
 
 @router.get("/api/rooms", response_model=List[RoomOut])
 def list_rooms(db: Session = Depends(get_db)):
     """
-    Return all rooms (Threads). Guarantees at least one default room exists.
+    Return rooms where the current user is a member.
+    Self-heals membership for legacy rooms with no members.
     """
+    current_user = get_current_user(db)
+    
     # Ensure at least one room exists
     get_or_create_default_room(db)
-
+    
+    # Get all rooms to check for orphaned ones
+    all_rooms = db.query(Thread).all()
+    
+    # Self-heal: ensure membership for rooms with zero members
+    for room in all_rooms:
+        member_count = db.query(RoomMember).filter(RoomMember.thread_id == room.id).count()
+        if member_count == 0:
+            ensure_membership_for_current_user(db, room.id)
+    
+    # Now return only rooms where current user is a member
+    user_room_ids = (
+        db.query(RoomMember.thread_id)
+        .filter(RoomMember.user_id == current_user.id)
+        .all()
+    )
+    room_ids = [r[0] for r in user_room_ids]
+    
     rooms = (
         db.query(Thread)
+        .filter(Thread.id.in_(room_ids))
         .order_by(Thread.updated_at.desc())
         .all()
     )
@@ -187,7 +254,15 @@ def get_room_messages(
     """
     Return messages for a room ordered oldest->newest.
     Supports simple 'before id' pagination.
+    Requires membership in the room.
     """
+    # Self-heal membership if needed
+    ensure_membership_for_current_user(db, room_id)
+    
+    # Require membership to view messages
+    current_user = get_current_user(db)
+    require_membership(db, current_user, room_id)
+    
     query = db.query(Message).filter(Message.thread_id == room_id)
 
     if before is not None:
@@ -212,7 +287,15 @@ def create_room_message(
 ):
     """
     Create a new *user* message in the given room.
+    Requires membership in the room.
     """
+    # Self-heal membership if needed
+    ensure_membership_for_current_user(db, room_id)
+    
+    # Require membership to send messages
+    current_user = get_current_user(db)
+    require_membership(db, current_user, room_id)
+    
     text = (payload.text or "").strip()
     if not text:
         raise HTTPException(status_code=400, detail="Message text is required.")
@@ -243,7 +326,15 @@ def create_room_message(
 def get_room_members(room_id: int, db: Session = Depends(get_db)):
     """
     Get all members of a room with their user information.
+    Requires membership in the room.
     """
+    # Self-heal membership if needed
+    ensure_membership_for_current_user(db, room_id)
+    
+    # Require membership to view member list
+    current_user = get_current_user(db)
+    require_membership(db, current_user, room_id)
+    
     # Verify room exists
     room = db.query(Thread).filter(Thread.id == room_id).first()
     if not room:
@@ -276,8 +367,23 @@ def get_room_members(room_id: int, db: Session = Depends(get_db)):
 def add_room_member(room_id: int, payload: AddMemberRequest, db: Session = Depends(get_db)):
     """
     Add a user to a room as a member.
+    Requires owner or admin role to add members.
     """
     user_id = payload.user_id
+    
+    # Get current user and verify they're a member
+    current_user = get_current_user(db)
+    membership = get_membership(db, current_user.id, room_id)
+    
+    if membership is None:
+        raise HTTPException(status_code=403, detail="Not a member of this room")
+    
+    # Only owners and admins can add members
+    if not can_add_members(membership):
+        raise HTTPException(
+            status_code=403,
+            detail="Only owners/admins can add members to this room"
+        )
     
     # Verify room exists
     room = db.query(Thread).filter(Thread.id == room_id).first()
@@ -305,22 +411,22 @@ def add_room_member(room_id: int, payload: AddMemberRequest, db: Session = Depen
             "joined_at": existing.created_at,
         }
     
-    # Create new membership
+    # Create new membership with default role "member"
     now = datetime.utcnow()
-    membership = RoomMember(
+    new_membership = RoomMember(
         thread_id=room_id,
         user_id=user_id,
-        role="member",
+        role="member",  # Default role
         created_at=now,
     )
-    db.add(membership)
+    db.add(new_membership)
     db.commit()
-    db.refresh(membership)
+    db.refresh(new_membership)
     
     return {
         "user_id": user.id,
         "name": user.name,
         "handle": user.handle,
-        "role": membership.role,
-        "joined_at": membership.created_at,
+        "role": new_membership.role,
+        "joined_at": new_membership.created_at,
     }

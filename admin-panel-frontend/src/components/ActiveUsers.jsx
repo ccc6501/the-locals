@@ -59,12 +59,12 @@ const ActiveUsers = () => {
         fetchCurrentUser();
         fetchActiveUsers();
         sendHeartbeat(); // Initial heartbeat
-        
+
         // Refresh every 10 seconds
         const refreshInterval = setInterval(fetchActiveUsers, 10000);
         // Send heartbeat every 30 seconds to stay online
         const heartbeatInterval = setInterval(sendHeartbeat, 30000);
-        
+
         return () => {
             clearInterval(refreshInterval);
             clearInterval(heartbeatInterval);
@@ -92,9 +92,9 @@ const ActiveUsers = () => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(editForm)
             });
-            
+
             if (!response.ok) throw new Error('Failed to update user');
-            
+
             // Refresh users list
             await fetchActiveUsers();
             setEditingUser(null);
@@ -106,7 +106,7 @@ const ActiveUsers = () => {
     };
 
     const getRoleIcon = (role) => {
-        switch(role) {
+        switch (role) {
             case 'admin': return <Shield className="w-4 h-4" />;
             case 'moderator': return <UserCog className="w-4 h-4" />;
             default: return <UserIcon className="w-4 h-4" />;
@@ -114,7 +114,7 @@ const ActiveUsers = () => {
     };
 
     const getRoleBadgeColor = (role) => {
-        switch(role) {
+        switch (role) {
             case 'admin': return 'from-rose-600/30 to-pink-600/30 border-rose-500/40 text-rose-300';
             case 'moderator': return 'from-sky-600/30 to-cyan-600/30 border-sky-500/40 text-sky-300';
             default: return 'from-slate-600/30 to-slate-700/30 border-slate-500/40 text-slate-300';
@@ -122,7 +122,7 @@ const ActiveUsers = () => {
     };
 
     const getDeviceIcon = (deviceType) => {
-        switch(deviceType) {
+        switch (deviceType) {
             case 'mobile': return <Smartphone className="w-4 h-4" />;
             case 'tablet': return <Tablet className="w-4 h-4" />;
             default: return <Monitor className="w-4 h-4" />;
@@ -168,7 +168,7 @@ const ActiveUsers = () => {
                             <p className="text-xs text-slate-400">Tailscale Network</p>
                         </div>
                     </div>
-                    <button 
+                    <button
                         onClick={handleRefresh}
                         disabled={refreshing}
                         className="px-3 py-1.5 rounded-lg bg-slate-800/60 hover:bg-slate-700 disabled:opacity-50 text-slate-300 text-xs font-medium transition-colors flex items-center gap-2"
@@ -200,7 +200,7 @@ const ActiveUsers = () => {
                     </div>
                 ) : (
                     users.map((user) => (
-                        <div 
+                        <div
                             key={user.id}
                             className="bg-slate-900/60 border border-slate-800/60 rounded-xl p-4 hover:bg-slate-900/80 hover:border-slate-700/60 transition-all"
                         >
@@ -224,32 +224,32 @@ const ActiveUsers = () => {
                                             </button>
                                         </div>
                                     </div>
-                                    
+
                                     <div>
                                         <label className="text-xs text-slate-400 block mb-1">Name</label>
                                         <input
                                             type="text"
                                             value={editForm.name}
-                                            onChange={(e) => setEditForm({...editForm, name: e.target.value})}
+                                            onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
                                             className="w-full px-3 py-2 rounded-lg bg-slate-950/50 border border-slate-700/50 text-white text-sm focus:outline-none focus:border-sky-500/50"
                                         />
                                     </div>
-                                    
+
                                     <div>
                                         <label className="text-xs text-slate-400 block mb-1">Email</label>
                                         <input
                                             type="email"
                                             value={editForm.email}
-                                            onChange={(e) => setEditForm({...editForm, email: e.target.value})}
+                                            onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
                                             className="w-full px-3 py-2 rounded-lg bg-slate-950/50 border border-slate-700/50 text-white text-sm focus:outline-none focus:border-sky-500/50"
                                         />
                                     </div>
-                                    
+
                                     <div>
                                         <label className="text-xs text-slate-400 block mb-1">Role</label>
                                         <select
                                             value={editForm.role}
-                                            onChange={(e) => setEditForm({...editForm, role: e.target.value})}
+                                            onChange={(e) => setEditForm({ ...editForm, role: e.target.value })}
                                             className="w-full px-3 py-2 rounded-lg bg-slate-950/50 border border-slate-700/50 text-white text-sm focus:outline-none focus:border-sky-500/50"
                                         >
                                             <option value="user">User</option>
@@ -271,7 +271,7 @@ const ActiveUsers = () => {
                                                     <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-emerald-500 border-2 border-slate-900 rounded-full"></div>
                                                 )}
                                             </div>
-                                            
+
                                             {/* User Info */}
                                             <div className="flex-1 min-w-0">
                                                 <div className="flex items-center gap-2 mb-0.5">
@@ -294,7 +294,7 @@ const ActiveUsers = () => {
                                                 {getRoleIcon(user.role)}
                                                 <span className="capitalize">{user.role}</span>
                                             </div>
-                                            
+
                                             {/* Edit Button (Admin Only) */}
                                             {isAdmin && (
                                                 <button
@@ -314,12 +314,12 @@ const ActiveUsers = () => {
                                             {getDeviceIcon(user.deviceType)}
                                             <span className="text-slate-400 truncate">{user.deviceName}</span>
                                         </div>
-                                        
+
                                         <div className="flex items-center gap-2 text-xs justify-end">
                                             <Clock className="w-3.5 h-3.5 text-slate-500 shrink-0" />
                                             <span className="text-slate-400">{user.lastSeen}</span>
                                         </div>
-                                        
+
                                         <div className="col-span-2 flex items-center gap-2 mt-1">
                                             <code className="px-2 py-1 rounded bg-slate-950/60 border border-slate-800/50 font-mono text-[10px] text-slate-400">
                                                 {user.tailscaleIp}

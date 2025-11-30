@@ -12,10 +12,10 @@ import { useAllUsers } from '../hooks/useAllUsers';
  * @param {boolean} canManageMembers - Whether current user can add members (owner/admin)
  * @param {number} roomId - Current room ID (required if canManageMembers is true)
  */
-const RoomMembersPanel = ({ 
-    members = [], 
-    loading = false, 
-    error = null, 
+const RoomMembersPanel = ({
+    members = [],
+    loading = false,
+    error = null,
     onClose,
     canManageMembers = false,
     roomId = null
@@ -24,28 +24,28 @@ const RoomMembersPanel = ({
     const [searchQuery, setSearchQuery] = useState('');
     const [addingUserId, setAddingUserId] = useState(null);
     const [addError, setAddError] = useState(null);
-    
+
     // Fetch all users only if we can manage members
     const { users, loading: usersLoading } = useAllUsers();
 
     // Helper to add a user to the room
     const handleAddUser = async (userId) => {
         if (!roomId) return;
-        
+
         setAddingUserId(userId);
         setAddError(null);
-        
+
         try {
             const res = await fetch(`/api/rooms/${roomId}/members`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ user_id: userId })
             });
-            
+
             if (!res.ok) {
                 const errorText = await res.text();
                 console.error('Failed to add user:', res.status, errorText);
-                
+
                 if (res.status === 403) {
                     setAddError('Only owners and admins can add people to this room.');
                 } else if (res.status === 400 || res.status === 409) {
@@ -55,14 +55,14 @@ const RoomMembersPanel = ({
                 }
                 return;
             }
-            
+
             // Success - close add people UI and refresh
             setShowAddPeople(false);
             setSearchQuery('');
-            
+
             // Force refresh to update members list
             window.location.reload();
-            
+
         } catch (err) {
             console.error('Error adding user:', err);
             setAddError('Failed to add user. Please try again.');
@@ -216,7 +216,7 @@ const RoomMembersPanel = ({
                                     <div className="flex-shrink-0 w-8 h-8 rounded-full bg-gradient-to-br from-violet-500 to-sky-500 flex items-center justify-center text-white font-semibold text-xs">
                                         {getInitials(user.name)}
                                     </div>
-                                    
+
                                     {/* User Info */}
                                     <div className="flex-1 min-w-0 text-left">
                                         <div className="text-sm font-medium text-slate-200 truncate">

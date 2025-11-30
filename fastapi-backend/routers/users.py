@@ -92,11 +92,13 @@ async def get_public_user_count(db: Session = Depends(get_db)):
 
 @router.get("", response_model=List[UserResponse], response_model_by_alias=True)
 async def get_users(
-    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Get all users with device information"""
     from datetime import datetime, timedelta
+    
+    # Phase 4A: Use hardcoded current user (no auth required for now)
+    current_user = get_current_user(db)
     
     users = db.query(User).all()
     
